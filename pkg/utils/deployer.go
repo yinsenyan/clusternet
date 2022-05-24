@@ -130,15 +130,15 @@ func ReconcileHelmRelease(ctx context.Context, deployCtx *DeployContext, kubeCli
 
 	// delete helm release
 	if hr.DeletionTimestamp != nil {
-		err := UninstallRelease(cfg, hr)
-		if err != nil {
-			return err
+		err2 := UninstallRelease(cfg, hr)
+		if err2 != nil {
+			return err2
 		}
 
 		hrCopy := hr.DeepCopy()
 		hrCopy.Finalizers = RemoveString(hrCopy.Finalizers, known.AppFinalizer)
-		_, err = clusternetClient.AppsV1alpha1().HelmReleases(hrCopy.Namespace).Update(context.TODO(), hrCopy, metav1.UpdateOptions{})
-		return err
+		_, err2 = clusternetClient.AppsV1alpha1().HelmReleases(hrCopy.Namespace).Update(context.TODO(), hrCopy, metav1.UpdateOptions{})
+		return err2
 	}
 
 	// install or upgrade helm release
@@ -161,13 +161,15 @@ func ReconcileHelmRelease(ctx context.Context, deployCtx *DeployContext, kubeCli
 
 	releaseName := getReleaseName(hr)
 	var overrideValues map[string]interface{}
-	if err := json.Unmarshal(hr.Spec.Overrides, &overrideValues); err != nil {
-		return err
+	if len(strings.TrimSpace(string(hr.Spec.Overrides))) > 0 {
+		if err = json.Unmarshal(hr.Spec.Overrides, &overrideValues); err != nil {
+			return err
+		}
 	}
 
 	var rel *release.Release
 	// check whether the release is deployed
-	rel, err = cfg.Releases.Deployed(hr.Name)
+	rel, err = cfg.Releases.Deployed(releaseName)
 	if err != nil {
 		if strings.Contains(err.Error(), driver.ErrNoDeployedReleases.Error()) {
 			rel, err = InstallRelease(cfg, releaseName, hr.Spec.TargetNamespace, chart, overrideValues)
@@ -206,8 +208,15 @@ func ReconcileHelmRelease(ctx context.Context, deployCtx *DeployContext, kubeCli
 			hrStatus.Notes = rel.Info.Notes
 		}
 	}
-	return UpdateHelmReleaseStatus(ctx, clusternetClient,
+
+	err3 := UpdateHelmReleaseStatus(ctx, clusternetClient,
 		hrLister, descLister, hr, hrStatus)
+	if err3 != nil {
+		// above "err" may not be nil, but we still need to update HelmRelease status
+		// "err" will aggregate "err3" as well
+		err = err3
+	}
+	return err
 }
 
 func GenerateHelmReleaseName(descName string, chartRef appsapi.ChartReference) string {
@@ -312,12 +321,12 @@ func ApplyDescription(ctx context.Context, clusternetClient *clusternetclientset
 			continue
 		}
 
-		labels := resource.GetLabels()
-		if labels == nil {
-			labels = map[string]string{}
+		annotations := resource.GetAnnotations()
+		if annotations == nil {
+			annotations = map[string]string{}
 		}
-		labels[known.ObjectOwnedByDescriptionLabel] = desc.Namespace + "." + desc.Name
-		resource.SetLabels(labels)
+		annotations[known.ObjectOwnedByDescriptionAnnotation] = desc.Namespace + "." + desc.Name
+		resource.SetAnnotations(annotations)
 		wg.Add(1)
 		go func(resource *unstructured.Unstructured) {
 			defer wg.Done()

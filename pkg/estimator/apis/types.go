@@ -1,5 +1,5 @@
 /*
-Copyright 2021 The Clusternet Authors.
+Copyright 2022 The Clusternet Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,8 +13,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-
-// This file was copied from k8s.io/kubernetes/pkg/scheduler/apis/config/types.go and modified
 
 package apis
 
@@ -30,20 +28,20 @@ import (
 // Enabled plugins are called in the order specified here, after default plugins. If they need to
 // be invoked before default plugins, default plugins must be disabled and re-enabled here in desired order.
 type Plugins struct {
-	// PreFilter is a list of plugins that should be invoked at "PreFilter" extension point of the scheduling framework.
+	// PreFilter is a list of plugins that should be invoked at "PreFilter" extension point of the estimating framework.
 	PreFilter PluginSet
 
-	// Filter is a list of plugins that should be invoked when filtering out clusters that cannot run the Subscription.
+	// Filter is a list of plugins that should be invoked when filtering out clusters that cannot run the requirements.
 	Filter PluginSet
 
 	// PostFilter is a list of plugins that are invoked after filtering phase, no matter whether filtering succeeds or not.
 	PostFilter PluginSet
 
-	// PreEstimate is a list of plugins that are invoked before estimating.
-	PreEstimate PluginSet
+	// PreCompute is a list of plugins that are invoked before Computing.
+	PreCompute PluginSet
 
-	// Estimate is a list of plugins that should be invoked when estimate max available replicas for clusters that have passed the filtering phase.
-	Estimate PluginSet
+	// Compute is a list of plugins that should be invoked when compute max available replicas for nodes that have passed the filtering phase.
+	Compute PluginSet
 
 	// PreScore is a list of plugins that are invoked before scoring.
 	PreScore PluginSet
@@ -51,28 +49,11 @@ type Plugins struct {
 	// Score is a list of plugins that should be invoked when ranking clusters that have passed the filtering phase.
 	Score PluginSet
 
-	// PreAssign is a list of plugins that are invoked before assigning.
-	PreAssign PluginSet
+	// PreAggregate is a list of plugins that are invoked before aggregating.
+	PreAggregate PluginSet
 
-	// Assign is a list of plugins that should be invoked when assigning replicas.
-	Assign PluginSet
-
-	// Reserve is a list of plugins invoked when reserving/unreserving resources
-	// after a cluster is assigned to run the Subscription.
-	Reserve PluginSet
-
-	// Permit is a list of plugins that control binding of a Subscription. These plugins can prevent or delay binding of a Subscription.
-	Permit PluginSet
-
-	// PreBind is a list of plugins that should be invoked before a Subscription is bound.
-	PreBind PluginSet
-
-	// Bind is a list of plugins that should be invoked at "Bind" extension point of the scheduling framework.
-	// The scheduler call these plugins in order. Scheduler skips the rest of these plugins as soon as one returns success.
-	Bind PluginSet
-
-	// PostBind is a list of plugins that should be invoked after a Subscription is successfully bound.
-	PostBind PluginSet
+	// Assign is a list of plugins that should be invoked when aggregating replicas.
+	Aggregate PluginSet
 }
 
 // PluginSet specifies enabled and disabled plugins for an extension point.
@@ -98,10 +79,10 @@ type Plugin struct {
  * NOTE: The following variables and methods are intentionally left out of the staging mirror.
  */
 const (
-	// DefaultPercentageOfClustersToScore defines the percentage of clusters of all clusters
-	// that once found feasible, the scheduler stops looking for more clusters.
-	// A value of 0 means adaptive, meaning the scheduler figures out a proper default.
-	DefaultPercentageOfClustersToScore = 0
+	// DefaultPercentageOfNodesToScore defines the percentage of nodes of all nodes
+	// that once found feasible, the estimator stops looking for more nodes.
+	// A value of 0 means adaptive, meaning the estimator figures out a proper default.
+	DefaultPercentageOfNodesToScore = 0
 
 	// MaxCustomPriorityScore is the max score UtilizationShapePoint expects.
 	MaxCustomPriorityScore int64 = 10
@@ -122,17 +103,12 @@ func (p *Plugins) Names() []string {
 		p.PreFilter,
 		p.Filter,
 		p.PostFilter,
-		p.Reserve,
-		p.PreEstimate,
-		p.Estimate,
+		p.PreCompute,
+		p.Compute,
 		p.PreScore,
 		p.Score,
-		p.PreAssign,
-		p.Assign,
-		p.PreBind,
-		p.Bind,
-		p.PostBind,
-		p.Permit,
+		p.PreAggregate,
+		p.Aggregate,
 	}
 	n := sets.NewString()
 	for _, e := range extensions {
