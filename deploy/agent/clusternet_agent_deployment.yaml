@@ -18,6 +18,16 @@ metadata:
   namespace: clusternet-system
 
 ---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: clusternet-app-deployer
+  namespace: clusternet-system
+  annotations:
+    kubernetes.io/service-account.name: clusternet-app-deployer
+type: kubernetes.io/service-account-token
+
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -41,7 +51,7 @@ spec:
           operator: Exists
       containers:
         - name: clusternet-agent
-          image: ghcr.io/clusternet/clusternet-agent:v0.11.0
+          image: ghcr.io/clusternet/clusternet-agent:v0.13.0
           imagePullPolicy: IfNotPresent
           env:
             - name: PARENT_URL

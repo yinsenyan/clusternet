@@ -36,8 +36,10 @@ import (
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apimachinery/pkg/version"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	"k8s.io/client-go/dynamic"
 	kubeinformers "k8s.io/client-go/informers"
 	coordinationinformers "k8s.io/client-go/informers/coordination/v1"
 	"k8s.io/client-go/kubernetes"
@@ -53,11 +55,12 @@ import (
 	aggregatorclient "k8s.io/kube-aggregator/pkg/client/clientset_generated/clientset"
 	aggregatorinformers "k8s.io/kube-aggregator/pkg/client/informers/externalversions"
 	mcsclientset "sigs.k8s.io/mcs-api/pkg/client/clientset/versioned"
-	mcsInformers "sigs.k8s.io/mcs-api/pkg/client/informers/externalversions"
+	mcsinformers "sigs.k8s.io/mcs-api/pkg/client/informers/externalversions"
 
 	appsapi "github.com/clusternet/clusternet/pkg/apis/apps/v1alpha1"
 	clusterapi "github.com/clusternet/clusternet/pkg/apis/clusters/v1beta1"
 	"github.com/clusternet/clusternet/pkg/controllers/clusters/clusterlifecycle"
+	"github.com/clusternet/clusternet/pkg/controllers/clusters/clusterlifecycle/discovery"
 	"github.com/clusternet/clusternet/pkg/controllers/mcs"
 	"github.com/clusternet/clusternet/pkg/controllers/misc/leasegc"
 	"github.com/clusternet/clusternet/pkg/features"
@@ -94,12 +97,15 @@ type Hub struct {
 	deployer    *deployer.Deployer
 
 	clusterLifecycle *clusterlifecycle.Controller
+	clusterDiscovery *discovery.Controller
 
 	recorder record.EventRecorder
 
 	socketConnection bool
 	deployerEnabled  bool
-	serviceImport    *mcs.ServiceImportController
+
+	serviceImportEnabled bool
+	serviceImport        *mcs.ServiceImportController
 }
 
 // NewHub returns a new Hub.
@@ -136,7 +142,7 @@ func NewHub(opts *options.HubServerOptions) (*Hub, error) {
 	// creates the informer factory
 	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(kubeClient, known.DefaultResync)
 	clusternetInformerFactory := informers.NewSharedInformerFactory(clusternetClient, known.DefaultResync)
-	mcsInformerFactory := mcsInformers.NewSharedInformerFactory(mcsClientSet, known.DefaultResync)
+	mcsInformerFactory := mcsinformers.NewSharedInformerFactory(mcsClientSet, known.DefaultResync)
 
 	aggregatorInformerFactory := aggregatorinformers.NewSharedInformerFactory(aggregatorclient.
 		NewForConfigOrDie(rootClientBuilder.ConfigOrDie("clusternet-hub-kube-client")), known.DefaultResync)
@@ -158,8 +164,36 @@ func NewHub(opts *options.HubServerOptions) (*Hub, error) {
 	}
 
 	clusterLifecycle := clusterlifecycle.NewController(clusternetClient, clusternetInformerFactory.Clusters().V1beta1().ManagedClusters(), recorder)
+	var clusterDiscovery *discovery.Controller
+	if len(opts.ClusterAPIKubeconfig) > 0 {
+		clusterAPICfg, err2 := utils.LoadsKubeConfigFromFile(opts.ClusterAPIKubeconfig)
+		if err2 != nil {
+			return nil, err
+		}
+		clusterDiscovery = discovery.NewController(
+			dynamic.NewForConfigOrDie(clusterAPICfg),
+			kubernetes.NewForConfigOrDie(clusterAPICfg),
+			known.DefaultResync,
+		)
+	} else {
+		klog.Warning("will not discovery clusters created by cluster-api providers due to empty kubeconfig path")
+	}
 
-	serviceImport := mcs.NewServiceImportController(kubeClient, kubeInformerFactory.Discovery().V1().EndpointSlices(), mcsClientSet, mcsInformerFactory)
+	// get kubernetes server version
+	var ver *version.Info
+	if ver, err = mcsClientSet.Discovery().ServerVersion(); err != nil {
+		return nil, err
+	}
+
+	var serviceImportEnabled bool
+	if serviceImportEnabled, err = utils.EndpointSliceV1Promoted(ver.String()); err != nil {
+		return nil, err
+	}
+
+	var serviceImport *mcs.ServiceImportController
+	if serviceImportEnabled {
+		serviceImport = mcs.NewServiceImportController(kubeClient, kubeInformerFactory.Discovery().V1().EndpointSlices(), mcsClientSet, mcsInformerFactory)
+	}
 
 	hub := &Hub{
 		peerID:                    utilrand.String(5),
@@ -177,6 +211,8 @@ func NewHub(opts *options.HubServerOptions) (*Hub, error) {
 		recorder:                  recorder,
 		deployerEnabled:           deployerEnabled,
 		clusterLifecycle:          clusterLifecycle,
+		clusterDiscovery:          clusterDiscovery,
+		serviceImportEnabled:      serviceImportEnabled,
 		serviceImport:             serviceImport,
 	}
 	return hub, nil
@@ -401,8 +437,16 @@ func (hub *Hub) runControllers(ctx context.Context) {
 		}()
 	}
 
+	if hub.serviceImportEnabled {
+		go func() {
+			hub.serviceImport.Run(ctx)
+		}()
+	}
+
 	go func() {
-		hub.serviceImport.Run(ctx)
+		if hub.clusterDiscovery != nil {
+			hub.clusterDiscovery.Run(ctx)
+		}
 	}()
 
 	hub.clusterLifecycle.Run(hub.options.Threadiness, ctx.Done())
