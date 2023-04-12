@@ -80,7 +80,7 @@ func NewController(clusternetClient clusternetClientSet.Interface,
 
 	c := &Controller{
 		clusternetClient: clusternetClient,
-		workqueue:        workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "aggregatestatus"),
+		workqueue:        workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "aggregating_status"),
 		subsLister:       subsInformer.Lister(),
 		subsSynced:       subsInformer.Informer().HasSynced,
 		descLister:       descInformer.Lister(),
@@ -89,10 +89,13 @@ func NewController(clusternetClient clusternetClientSet.Interface,
 	}
 
 	// Manage the update/delete of Description
-	descInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := descInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		UpdateFunc: c.updateDescription,
 		DeleteFunc: c.deleteDescription,
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	return c, nil
 }

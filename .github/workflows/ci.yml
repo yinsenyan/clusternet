@@ -1,8 +1,6 @@
 name: CI
 on:
-  # Run this workflow every time a new commit pushed to upstream/fork repository.
-  # Run workflow on fork repository will help contributors find and resolve issues before sending a PR.
-  push:
+  merge_group:
   pull_request:
 jobs:
   golangci:
@@ -18,12 +16,12 @@ jobs:
       ## this will contain a matrix of all of the combinations
       ## we wish to test again:
       matrix:
-        go-version: [ 1.17.x, 1.18.x ]
+        go-version: [ 1.19.x, 1.20.x ]
         os: [ ubuntu-latest ]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Install Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
         with:
           go-version: ${{ matrix.go-version }}
       - name: Checkout code
@@ -32,7 +30,7 @@ jobs:
           fetch-depth: 1
           path: ${{ env.GOPATH }}/src/github.com/${{ github.repository }}
       - name: Cache go modules and build cache
-        uses: actions/cache@v3.0.11
+        uses: actions/cache@v3.3.1
         with:
           # In order:
           # * Module download cache
@@ -66,12 +64,12 @@ jobs:
       ## this will contain a matrix of all of the combinations
       ## we wish to test again:
       matrix:
-        go-version: [ 1.17.x, 1.18.x ]
+        go-version: [ 1.19.x, 1.20.x ]
         os: [ ubuntu-latest ]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Install Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
         with:
           go-version: ${{ matrix.go-version }}
       - name: Checkout code
@@ -86,7 +84,7 @@ jobs:
       - name: Rebase code
         run: git rebase origin/main
       - name: Cache go modules and build cache
-        uses: actions/cache@v3.0.11
+        uses: actions/cache@v3.3.1
         with:
           # In order:
           # * Module download cache
@@ -119,12 +117,12 @@ jobs:
       ## this will contain a matrix of all of the combinations
       ## we wish to test again:
       matrix:
-        go-version: [ 1.17.x, 1.18.x ]
+        go-version: [ 1.19.x, 1.20.x ]
         os: [ ubuntu-latest ]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Install Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
         with:
           go-version: ${{ matrix.go-version }}
       - name: Checkout code
@@ -139,7 +137,7 @@ jobs:
       - name: Rebase code
         run: git rebase origin/main
       - name: Cache go modules and build cache
-        uses: actions/cache@v3.0.11
+        uses: actions/cache@v3.3.1
         with:
           # In order:
           # * Module download cache
@@ -158,9 +156,10 @@ jobs:
       - name: Run tests
         run: make test
       - name: Upload coverage to Codecov
-        if: matrix.go-version == '1.17.x' && github.repository_owner == 'clusternet'
+        if: matrix.go-version == '1.19.x' && github.repository_owner == 'clusternet'
         uses: codecov/codecov-action@v3
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
           files: ${{ env.GOPATH }}/src/github.com/${{ github.repository }}/coverage.out
           name: codecov-umbrella # optional
           fail_ci_if_error: true # optional (default = false)

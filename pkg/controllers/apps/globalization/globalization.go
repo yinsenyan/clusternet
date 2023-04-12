@@ -88,7 +88,7 @@ func NewController(clusternetClient clusternetclientset.Interface,
 
 	c := &Controller{
 		clusternetClient:  clusternetClient,
-		workqueue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "globalization"),
+		workqueue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "Globalization"),
 		globLister:        globInformer.Lister(),
 		globSynced:        globInformer.Informer().HasSynced,
 		chartLister:       chartInformer.Lister(),
@@ -101,11 +101,14 @@ func NewController(clusternetClient clusternetclientset.Interface,
 	}
 
 	// Manage the addition/update of Globalization
-	globInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := globInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    c.addGlobalization,
 		UpdateFunc: c.updateGlobalization,
 		DeleteFunc: c.deleteGlobalization,
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	return c, nil
 }
@@ -258,7 +261,7 @@ func (c *Controller) syncHandler(key string) error {
 
 	klog.V(4).Infof("start processing Globalization %q", key)
 	// Get the Globalization resource with this name
-	glob, err := c.globLister.Get(name)
+	cachedGlob, err := c.globLister.Get(name)
 	// The Globalization resource may no longer exist, in which case we stop processing.
 	if errors.IsNotFound(err) {
 		klog.V(2).Infof("Globalization %q has been deleted", key)
@@ -269,6 +272,7 @@ func (c *Controller) syncHandler(key string) error {
 	}
 
 	// add finalizer
+	glob := cachedGlob.DeepCopy()
 	if !utils.ContainsString(glob.Finalizers, known.AppFinalizer) && glob.DeletionTimestamp == nil {
 		glob.Finalizers = append(glob.Finalizers, known.AppFinalizer)
 		glob, err = c.clusternetClient.AppsV1alpha1().Globalizations().Update(context.TODO(),

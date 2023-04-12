@@ -33,16 +33,17 @@ const (
 
 // PredictorReplicas indicates a map of label to replicas with this constraint. Here the label constraint
 // could be topology constraints, such as
-// {
-//    "topology.kubernetes.io/zone=zone1,topology.kubernetes.io/region=region1": 3,
-//    "topology.kubernetes.io/zone=zone2,topology.kubernetes.io/region=region1": 5,
-// }.
+//
+//	{
+//	   "topology.kubernetes.io/zone=zone1,topology.kubernetes.io/region=region1": 3,
+//	   "topology.kubernetes.io/zone=zone2,topology.kubernetes.io/region=region1": 5,
+//	}.
 type PredictorReplicas map[string]int32
 
 // PredictorResults specify
 type PredictorResults struct {
 	// Replicas records the max acceptable replicas in this cluster
-	Replicas PredictorReplicas `json:"replicas,omitemtpy"`
+	Replicas PredictorReplicas `json:"replicas,omitempty"`
 }
 
 // PredictorProvider is an interface that provides replicas predictions.
@@ -72,4 +73,9 @@ const (
 
 	// SubPathUnscheduled specifies the sub path for listing unscheduled replicas
 	SubPathUnscheduled = "/unscheduled"
+)
+
+const (
+	// ClusterIDHeader is the HTTP header name used by replicas predictor
+	ClusterIDHeader = "Cluster-ID"
 )

@@ -85,7 +85,7 @@ func (c *ServiceImportController) Handle(obj interface{}) (requeueAfter *time.Du
 		utilruntime.HandleError(fmt.Errorf("invalid service import key: %s", key))
 		return nil, nil
 	}
-	si, err := c.serviceImportLister.ServiceImports(namespace).Get(siName)
+	cachedSi, err := c.serviceImportLister.ServiceImports(namespace).Get(siName)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			utilruntime.HandleError(fmt.Errorf("service import '%s' in work queue no longer exists", key))
@@ -93,9 +93,10 @@ func (c *ServiceImportController) Handle(obj interface{}) (requeueAfter *time.Du
 		}
 		return nil, err
 	}
+	si := cachedSi.DeepCopy()
 	siTerminating := si.DeletionTimestamp != nil
-	rawServiceName, _ := si.Labels[known.LabelServiceName]
-	rawServiceNamespace, _ := si.Labels[known.LabelServiceNameSpace]
+	rawServiceName := si.Labels[known.LabelServiceName]
+	rawServiceNamespace := si.Labels[known.LabelServiceNameSpace]
 
 	if !utils.ContainsString(si.Finalizers, known.AppFinalizer) && !siTerminating {
 		si.Finalizers = append(si.Finalizers, known.AppFinalizer)
@@ -186,15 +187,17 @@ func (c *ServiceImportController) applyServiceFromServiceImport(svcImport *v1alp
 		},
 	}
 
-	derivedService, err := c.localk8sClient.CoreV1().Services(svcImport.Namespace).Create(context.TODO(), newService, metav1.CreateOptions{})
-	if err != nil && !errors.IsAlreadyExists(err) {
-		klog.Errorf("Create delicate service(%s/%s) failed, for: %v", newService.Namespace, newService.Name, err)
-		return err
-	}
-
-	derivedService, err = c.localk8sClient.CoreV1().Services(svcImport.Namespace).Get(context.TODO(), newService.Name, metav1.GetOptions{})
+	derivedService, err := c.localk8sClient.CoreV1().Services(svcImport.Namespace).Get(context.TODO(), newService.Name, metav1.GetOptions{})
 	if err != nil {
-		return err
+		if !errors.IsNotFound(err) {
+			return err
+		}
+
+		derivedService, err = c.localk8sClient.CoreV1().Services(svcImport.Namespace).Create(context.TODO(), newService, metav1.CreateOptions{})
+		if err != nil {
+			klog.Errorf("Create delicate service(%s/%s) failed, for: %v", newService.Namespace, newService.Name, err)
+			return err
+		}
 	}
 
 	if !reflect.DeepEqual(derivedService.Spec.Ports, newService.Spec.Ports) {
@@ -250,8 +253,12 @@ func (c *ServiceImportController) Run(ctx context.Context) {
 	controller := yacht.NewController("serviceimport").
 		WithCacheSynced(c.serviceImportInformer.Informer().HasSynced, c.endpointSliceInformer.Informer().HasSynced).
 		WithHandlerFunc(c.Handle).WithEnqueueFilterFunc(preFilter)
-	c.serviceImportInformer.Informer().AddEventHandler(controller.DefaultResourceEventHandlerFuncs())
-	c.endpointSliceInformer.Informer().AddEventHandler(cache.FilteringResourceEventHandler{
+	_, err := c.serviceImportInformer.Informer().AddEventHandler(controller.DefaultResourceEventHandlerFuncs())
+	if err != nil {
+		klog.Fatalf("failed to add event handler for serviceimport: %w", err)
+		return
+	}
+	_, err = c.endpointSliceInformer.Informer().AddEventHandler(cache.FilteringResourceEventHandler{
 		FilterFunc: func(obj interface{}) bool {
 			if si, err := c.getServiceImportFromEndpointSlice(obj); err == nil {
 				controller.Enqueue(si)
@@ -259,14 +266,18 @@ func (c *ServiceImportController) Run(ctx context.Context) {
 			return false
 		},
 	})
+	if err != nil {
+		klog.Fatalf("failed to add event handler for serviceimport: %w", err)
+		return
+	}
 
 	controller.Run(ctx)
 }
 
-//recycleServiceImport recycle derived service and derived endpoint slices.
+// recycleServiceImport recycle derived service and derived endpoint slices.
 func (c *ServiceImportController) recycleServiceImport(ctx context.Context, si *v1alpha1.ServiceImport) error {
-	rawServiceName, _ := si.Labels[known.LabelServiceName]
-	rawServiceNamespace, _ := si.Labels[known.LabelServiceNameSpace]
+	rawServiceName := si.Labels[known.LabelServiceName]
+	rawServiceNamespace := si.Labels[known.LabelServiceNameSpace]
 	// 1. recycle endpoint slices.
 	if err := c.localk8sClient.DiscoveryV1().EndpointSlices(si.Namespace).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{
 		LabelSelector: labels.SelectorFromSet(labels.Set{

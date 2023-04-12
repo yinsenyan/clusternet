@@ -26,7 +26,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emicklei/go-restful"
+	"github.com/emicklei/go-restful/v3"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	apiextensionshelpers "k8s.io/apiextensions-apiserver/pkg/apihelpers"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -55,8 +55,8 @@ import (
 	shadowapi "github.com/clusternet/clusternet/pkg/apis/shadow/v1alpha1"
 	clusternet "github.com/clusternet/clusternet/pkg/generated/clientset/versioned"
 	applisters "github.com/clusternet/clusternet/pkg/generated/listers/apps/v1alpha1"
+	"github.com/clusternet/clusternet/pkg/hub/registry/shadow/template"
 	"github.com/clusternet/clusternet/pkg/known"
-	"github.com/clusternet/clusternet/pkg/registry/shadow/template"
 )
 
 type crdHandler struct {
@@ -155,11 +155,15 @@ func (r *crdHandler) SetRootWebService(ws *restful.WebService) {
 		Writes(metav1.APIResourceList{}))
 
 	// start event handler after ws is set
-	r.crdInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := r.crdInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    r.addCustomResourceDefinition,
 		UpdateFunc: r.updateCustomResourceDefinition,
 		DeleteFunc: r.deleteCustomResourceDefinition,
 	})
+	if err != nil {
+		klog.Fatalf("failed to add event handler for crd: %w", err)
+		return
+	}
 }
 
 func (r *crdHandler) addCustomResourceDefinition(obj interface{}) {
@@ -293,13 +297,6 @@ func (r *crdHandler) addStorage(crd *apiextensionsv1.CustomResourceDefinition) e
 
 	kind := crd.Spec.Names.Kind
 	resource := crd.Spec.Names.Plural
-	selfLinkPrefix := ""
-	switch crd.Spec.Scope {
-	case apiextensionsv1.ClusterScoped:
-		selfLinkPrefix = "/" + path.Join("apis", shadowapi.GroupName, shadowapi.SchemeGroupVersion.Version) + "/" + resource + "/"
-	case apiextensionsv1.NamespaceScoped:
-		selfLinkPrefix = "/" + path.Join("apis", shadowapi.GroupName, shadowapi.SchemeGroupVersion.Version, "namespaces") + "/"
-	}
 
 	restStorage := template.NewREST(r.kubeRESTClient, r.clusternetClient, runtime.NewParameterCodec(Scheme), r.manifestLister, r.reservedNamespace)
 	restStorage.SetNamespaceScoped(crd.Spec.Scope == apiextensionsv1.NamespaceScoped)
@@ -331,9 +328,8 @@ func (r *crdHandler) addStorage(crd *apiextensionsv1.CustomResourceDefinition) e
 	r.storages[resource] = restStorage
 	r.requestScopes[resource] = &handlers.RequestScope{
 		Namer: handlers.ContextBasedNaming{
-			SelfLinker:         meta.NewAccessor(),
-			ClusterScoped:      crd.Spec.Scope == apiextensionsv1.ClusterScoped,
-			SelfLinkPathPrefix: selfLinkPrefix,
+			Namer:         meta.NewAccessor(),
+			ClusterScoped: crd.Spec.Scope == apiextensionsv1.ClusterScoped,
 		},
 		Serializer:               crdGroupInfo.NegotiatedSerializer,
 		ParameterCodec:           crdGroupInfo.ParameterCodec,

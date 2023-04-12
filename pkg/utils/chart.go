@@ -17,6 +17,7 @@ limitations under the License.
 package utils
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -34,6 +35,7 @@ import (
 	"helm.sh/helm/v3/pkg/repo"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/discovery"
 	cacheddiscovery "k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/kubernetes"
@@ -65,10 +67,6 @@ func FindOCIChart(chartRepo, chartName, chartVersion string) (bool, error) {
 		registry.ClientOptWriter(os.Stdout),
 		registry.ClientOptCredentialsFile(Settings.RegistryConfig),
 	)
-	if err != nil {
-		return false, err
-	}
-	err = registryClient.WithResolver(true, false)
 	if err != nil {
 		return false, err
 	}
@@ -140,6 +138,12 @@ func CheckIfInstallable(chart *chart.Chart) error {
 
 func InstallRelease(cfg *action.Configuration, hr *appsapi.HelmRelease,
 	chart *chart.Chart, vals map[string]interface{}) (*release.Release, error) {
+
+	err := replaceCRDs(cfg, hr, chart)
+	if err != nil {
+		return nil, err
+	}
+
 	client := action.NewInstall(cfg)
 	client.ReleaseName = getReleaseName(hr)
 	client.Timeout = time.Duration(hr.Spec.TimeoutSeconds) * time.Second
@@ -170,12 +174,18 @@ func InstallRelease(cfg *action.Configuration, hr *appsapi.HelmRelease,
 
 func UpgradeRelease(cfg *action.Configuration, hr *appsapi.HelmRelease,
 	chart *chart.Chart, vals map[string]interface{}) (*release.Release, error) {
+
+	err := replaceCRDs(cfg, hr, chart)
+	if err != nil {
+		return nil, err
+	}
+
 	client := action.NewUpgrade(cfg)
 	client.MaxHistory = cfg.Releases.MaxHistory // need to rewire it here
 	client.Timeout = time.Duration(hr.Spec.TimeoutSeconds) * time.Second
 	client.Namespace = hr.Spec.TargetNamespace
-	if hr.Spec.Atomic != nil {
-		client.Atomic = *hr.Spec.Atomic
+	if hr.Spec.UpgradeAtomic != nil {
+		client.Atomic = *hr.Spec.UpgradeAtomic
 	}
 	if hr.Spec.Force != nil {
 		client.Force = *hr.Spec.Force
@@ -197,6 +207,9 @@ func UpgradeRelease(cfg *action.Configuration, hr *appsapi.HelmRelease,
 
 func UninstallRelease(cfg *action.Configuration, hr *appsapi.HelmRelease) error {
 	client := action.NewUninstall(cfg)
+	if hr.Spec.Wait != nil {
+		client.Wait = *hr.Spec.Wait
+	}
 	client.Timeout = time.Duration(hr.Spec.TimeoutSeconds) * time.Second
 	_, err := client.Run(getReleaseName(hr))
 	if err != nil {
@@ -327,4 +340,38 @@ func getReleaseName(hr *appsapi.HelmRelease) string {
 		releaseName = *hr.Spec.ReleaseName
 	}
 	return releaseName
+}
+
+func replaceCRDs(cfg *action.Configuration, hr *appsapi.HelmRelease, chart *chart.Chart) error {
+	if hr.Spec.SkipCRDs != nil && *hr.Spec.SkipCRDs {
+		return nil
+	}
+
+	if hr.Spec.ReplaceCRDs != nil && *hr.Spec.ReplaceCRDs {
+		return doReplaceCRDs(cfg, chart)
+	}
+	return nil
+}
+
+func doReplaceCRDs(cfg *action.Configuration, targetChart *chart.Chart) error {
+	var allErrs []error
+	for _, crd := range targetChart.CRDObjects() {
+		crdResource, err := cfg.KubeClient.Build(bytes.NewBuffer(crd.File.Data), true)
+		if err != nil {
+			allErrs = append(allErrs, err)
+			continue
+		}
+		res, err := cfg.KubeClient.Update(crdResource, crdResource, true)
+		if err != nil {
+			klog.V(1).Infof("crd replace error, %s ", err.Error())
+			allErrs = append(allErrs, err)
+		}
+		klog.V(4).Infof("crd replaced success, %v", res.Updated)
+	}
+	for _, dep := range targetChart.Dependencies() {
+		if err := doReplaceCRDs(cfg, dep); err != nil {
+			allErrs = append(allErrs, err)
+		}
+	}
+	return errors.NewAggregate(allErrs)
 }

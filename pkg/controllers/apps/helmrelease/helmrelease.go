@@ -71,7 +71,7 @@ func NewController(clusternetClient clusternetclientset.Interface, hrInformer ap
 
 	c := &Controller{
 		clusternetClient: clusternetClient,
-		workqueue:        workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "helmRelease"),
+		workqueue:        workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "HelmRelease"),
 		hrLister:         hrInformer.Lister(),
 		hrSynced:         hrInformer.Informer().HasSynced,
 		recorder:         recorder,
@@ -79,11 +79,14 @@ func NewController(clusternetClient clusternetclientset.Interface, hrInformer ap
 	}
 
 	// Manage the addition/update of HelmRelease
-	hrInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := hrInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    c.addHelmRelease,
 		UpdateFunc: c.updateHelmRelease,
 		DeleteFunc: c.deleteHelmRelease,
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	return c, nil
 }

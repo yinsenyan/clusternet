@@ -3,6 +3,7 @@
 [![GoPkg Widget](https://pkg.go.dev/badge/github.com/clusternet/clusternet.svg)](https://pkg.go.dev/github.com/clusternet/clusternet)
 [![License](https://img.shields.io/github/license/clusternet/clusternet)](https://www.apache.org/licenses/LICENSE-2.0.html)
 ![GoVersion](https://img.shields.io/github/go-mod/go-version/clusternet/clusternet)
+[![OpenSSF Best Practices](https://bestpractices.coreinfrastructure.org/projects/7185/badge)](https://bestpractices.coreinfrastructure.org/projects/7185)
 [![Go Report Card](https://goreportcard.com/badge/github.com/clusternet/clusternet)](https://goreportcard.com/report/github.com/clusternet/clusternet)
 ![build](https://github.com/clusternet/clusternet/actions/workflows/ci.yml/badge.svg)
 [![Version](https://img.shields.io/github/v/release/clusternet/clusternet)](https://github.com/clusternet/clusternet/releases)
@@ -10,9 +11,11 @@
 
 ----
 
-Managing Your Clusters (including public, private, hybrid, edge, etc) as easily as Visiting the Internet.
+Managing Your Clusters (including public, private, hybrid, edge, etc.) as easily as Visiting the Internet.
 
 Out of the Box.
+
+A CNCF([Cloud Native Computing Foundation](https://cncf.io/)) Sandbox Project.
 
 ----
 
@@ -39,7 +42,7 @@ Clusternet is multiple platforms supported now, including `linux/amd64`, `linux/
 
 - Kubernetes Multi-Cluster Management and Governance
     - managing Kubernetes clusters running in cloud providers, such as AWS, Google Cloud, Tencent Cloud, Alibaba Cloud,
-      etc
+      etc.
     - managing on-premise Kubernetes clusters
     - managing any [Certified Kubernetes Distributions](https://www.cncf.io/certification/software-conformance/), such
       as [k3s](https://github.com/k3s-io/k3s)
@@ -52,19 +55,19 @@ Clusternet is multiple platforms supported now, including `linux/amd64`, `linux/
       from [this tuorial](https://clusternet.io/docs/tutorials/cluster-management/visiting-child-clusters-with-rbac/))
     - cluster auto-labelling based on [Node Feature Discovery](https://github.com/kubernetes-sigs/node-feature-discovery)
 - Application Coordinations
-    - Scheduling Framework (`in-tree` plugins, `out-of-tree` plugins)
+    - Scheduling **Framework** (`in-tree` plugins, `out-of-tree` plugins)
     - Cross-Cluster Scheduling
         - replication scheduling
         - static dividing scheduling by weight
         - dynamic dividing scheduling by capacity
-          - cluster resource predictor framework for `in-tree` and `out-of-tree` implementations
+          - cluster resource predictor **framework** for `in-tree` and `out-of-tree` implementations
           - various deployment topologies for cluster resource predictors
         - subgroup cluster scheduling
     - Various Resource Types
-        - Kubernetes native objects, such as `Deployment`, `StatefulSet`, etc
+        - Kubernetes native objects, such as `Deployment`, `StatefulSet`, etc.
         - CRDs
         - helm charts, including [OCI-based Helm charts](https://helm.sh/docs/topics/registries/)
-    - Resource interpretation with `in-tree` or `out-of-tree` controller
+    - Resource interpretations with `in-tree` or `out-of-tree` controllers
     - [Setting Overrides](https://clusternet.io/docs/tutorials/multi-cluster-apps/setting-overrides/)
         - two-stage priority based override strategies
         - easy to rollback overrides
@@ -84,8 +87,8 @@ Clusternet is multiple platforms supported now, including `linux/amd64`, `linux/
 
 ![](https://clusternet.io/images/clusternet-arch.png)
 
-Clusternet is a lightweight addon that consists of three components, `clusternet-agent`, `clusternet-scheduler`
-and `clusternet-hub`.
+Clusternet is a lightweight addon that consists of four components, `clusternet-agent`, `clusternet-scheduler`,
+`clusternet-controller-manager` and `clusternet-hub`.
 
 Explore the architecture of Clusternet on [clusternet.io](https://clusternet.io/docs/introduction/#architecture).
 
@@ -121,5 +124,9 @@ If you want to get participated and become a contributor to Clusternet, please d
 
 A [developer guide](https://clusternet.io/docs/developer-guide/) is ready to help you
 
-- build binaries for all platforms, such as `darwin/amd64`, `linux/amd64`, `linux/arm64`, etc;
-- build docker images for multiple platforms, such as `linux/amd64`, `linux/arm64`, etc;
+- build binaries for all platforms, such as `darwin/amd64`, `linux/amd64`, `linux/arm64`, etc.;
+- build docker images for multiple platforms, such as `linux/amd64`, `linux/arm64`, etc.;
+
+---
+
+<div align="center"><img src="https://raw.githubusercontent.com/cncf/artwork/master/other/cncf/horizontal/color/cncf-color.svg" style="width:600px;" /></div>

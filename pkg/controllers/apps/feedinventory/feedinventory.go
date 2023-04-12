@@ -85,7 +85,7 @@ func NewController(clusternetClient clusternetclientset.Interface,
 	reservedNamespace string, customSyncHandlerFunc SyncHandlerFunc) (*Controller, error) {
 	c := &Controller{
 		clusternetClient:      clusternetClient,
-		workqueue:             workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "feedInventory"),
+		workqueue:             workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "FeedInventory"),
 		subLister:             subsInformer.Lister(),
 		subSynced:             subsInformer.Informer().HasSynced,
 		finvLister:            finvInformer.Lister(),
@@ -98,21 +98,30 @@ func NewController(clusternetClient clusternetclientset.Interface,
 		customSyncHandlerFunc: customSyncHandlerFunc,
 	}
 
-	subsInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := subsInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    c.addSubscription,
 		UpdateFunc: c.updateSubscription,
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	finvInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = finvInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		DeleteFunc: c.deleteFeedInventory,
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	// When a resource gets scaled, such as Deployment,
 	// re-enqueue all referring Subscription objects
-	manifestInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = manifestInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    c.addManifest,
 		UpdateFunc: c.updateManifest,
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	// TODO: helm charts ?
 

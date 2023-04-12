@@ -78,7 +78,7 @@ func NewController(clusternetClient clusternetclientset.Interface,
 
 	c := &Controller{
 		clusternetClient:    clusternetClient,
-		workqueue:           workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "helmChart"),
+		workqueue:           workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "HelmChart"),
 		helmChartLister:     helmChartInformer.Lister(),
 		helmChartSynced:     helmChartInformer.Informer().HasSynced,
 		baseLister:          baseInformer.Lister(),
@@ -89,15 +89,21 @@ func NewController(clusternetClient clusternetclientset.Interface,
 	}
 
 	// Manage the addition/update of HelmChart
-	helmChartInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := helmChartInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    c.addHelmChart,
 		UpdateFunc: c.updateHelmChart,
 		DeleteFunc: c.deleteHelmChart,
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	baseInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = baseInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		UpdateFunc: c.updateBase,
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	return c, nil
 }

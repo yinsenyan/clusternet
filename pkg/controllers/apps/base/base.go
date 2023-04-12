@@ -76,7 +76,7 @@ func NewController(clusternetClient clusternetclientset.Interface,
 
 	c := &Controller{
 		clusternetClient: clusternetClient,
-		workqueue:        workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "base"),
+		workqueue:        workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "Base"),
 		baseLister:       baseInformer.Lister(),
 		baseSynced:       baseInformer.Informer().HasSynced,
 		recorder:         recorder,
@@ -84,15 +84,21 @@ func NewController(clusternetClient clusternetclientset.Interface,
 	}
 
 	// Manage the addition/update of Base
-	baseInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := baseInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    c.addBase,
 		UpdateFunc: c.updateBase,
 		DeleteFunc: c.deleteBase,
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	descInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = descInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		DeleteFunc: c.deleteDescription,
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	return c, nil
 }
@@ -295,7 +301,7 @@ func (c *Controller) syncHandler(key string) error {
 
 	klog.V(4).Infof("start processing Base %q", key)
 	// Get the Base resource with this name
-	base, err := c.baseLister.Bases(ns).Get(name)
+	cachedBase, err := c.baseLister.Bases(ns).Get(name)
 	// The Base resource may no longer exist, in which case we stop processing.
 	if errors.IsNotFound(err) {
 		klog.V(2).Infof("Base %q has been deleted", key)
@@ -306,6 +312,7 @@ func (c *Controller) syncHandler(key string) error {
 	}
 
 	// add finalizer
+	base := cachedBase.DeepCopy()
 	if !utils.ContainsString(base.Finalizers, known.AppFinalizer) && base.DeletionTimestamp == nil {
 		base.Finalizers = append(base.Finalizers, known.AppFinalizer)
 		base, err = c.clusternetClient.AppsV1alpha1().Bases(base.Namespace).Update(context.TODO(),

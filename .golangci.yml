@@ -5,22 +5,21 @@ run:
   deadline: 10m
 
 linters:
-  fast: false
-  enable:
-    - deadcode
-    - unused
-    - gci
-    - varcheck
-    - ineffassign
-    - goimports
-    - gofmt
-    - misspell
-    - unparam
-    - unconvert
-    - govet
-    - errcheck
-    - structcheck
   disable-all: true
+  enable: # please keep this alphabetized
+    - errcheck
+    - gci
+    - gocritic
+    - gofmt
+    - goimports
+    - govet
+    - ineffassign
+    - misspell
+    - staticcheck
+    - stylecheck
+    - unconvert
+    - unparam
+    - unused
 
 linters-settings:
   gci:
@@ -41,3 +40,18 @@ linters-settings:
     # Default: ["newLine"]
     section-separators:
       - newLine
+  gocritic:
+    enabled-checks:
+      - equalFold
+      - boolExprSimplify
+  staticcheck:
+    checks: [
+      "all",
+      "-SA1024",
+      "-SA1019", # TODO(fix) Using a deprecated function, variable, constant or field
+      "-SA2002"  # TODO(fix) Called testing.T.FailNow or SkipNow in a goroutine, which isn’t allowed
+    ]
+  stylecheck:
+    checks: [
+      "ST1019",  # Importing the same package multiple times.
+    ]

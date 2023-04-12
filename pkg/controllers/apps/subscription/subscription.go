@@ -80,7 +80,7 @@ func NewController(clusternetClient clusternetclientset.Interface,
 
 	c := &Controller{
 		clusternetClient: clusternetClient,
-		workqueue:        workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "subscription"),
+		workqueue:        workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "Subscription"),
 		subsLister:       subsInformer.Lister(),
 		subsSynced:       subsInformer.Informer().HasSynced,
 		baseSynced:       baseInformer.Informer().HasSynced,
@@ -89,15 +89,21 @@ func NewController(clusternetClient clusternetclientset.Interface,
 	}
 
 	// Manage the addition/update of Subscription
-	subsInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := subsInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    c.addSubscription,
 		UpdateFunc: c.updateSubscription,
 		DeleteFunc: c.deleteSubscription,
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	baseInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = baseInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		DeleteFunc: c.deleteBase,
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	return c, nil
 }
@@ -301,7 +307,7 @@ func (c *Controller) syncHandler(key string) error {
 
 	klog.V(4).Infof("start processing Subscription %q", key)
 	// Get the Subscription resource with this name
-	sub, err := c.subsLister.Subscriptions(ns).Get(name)
+	cachedSub, err := c.subsLister.Subscriptions(ns).Get(name)
 	// The Subscription resource may no longer exist, in which case we stop processing.
 	if errors.IsNotFound(err) {
 		klog.V(2).Infof("Subscription %q has been deleted", key)
@@ -312,6 +318,7 @@ func (c *Controller) syncHandler(key string) error {
 	}
 
 	// add finalizer
+	sub := cachedSub.DeepCopy()
 	if !utils.ContainsString(sub.Finalizers, known.AppFinalizer) && sub.DeletionTimestamp == nil {
 		sub.Finalizers = append(sub.Finalizers, known.AppFinalizer)
 		if sub, err = c.clusternetClient.AppsV1alpha1().Subscriptions(sub.Namespace).Update(context.TODO(),

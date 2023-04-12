@@ -18,10 +18,17 @@ package app
 
 import (
 	"context"
+	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	cliflag "k8s.io/component-base/cli/flag"
+	"k8s.io/component-base/cli/globalflag"
+	"k8s.io/component-base/logs"
+	logsapi "k8s.io/component-base/logs/api/v1"
+	"k8s.io/component-base/term"
 	"k8s.io/klog/v2"
 
 	_ "github.com/clusternet/clusternet/pkg/features"
@@ -30,6 +37,10 @@ import (
 	"github.com/clusternet/clusternet/pkg/scheduler/options"
 	"github.com/clusternet/clusternet/pkg/version"
 )
+
+func init() {
+	utilruntime.Must(logsapi.AddFeatureGates(utilfeature.DefaultMutableFeatureGate))
+}
 
 var (
 	// the command name
@@ -49,10 +60,26 @@ func NewSchedulerCommand(ctx context.Context, outOfTreeRegistryOptions ...Option
 	cmd := &cobra.Command{
 		Use:  cmdName,
 		Long: `cluster-wise scheduler`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			for _, arg := range args {
+				if len(arg) > 0 {
+					return fmt.Errorf("%q does not take any arguments, got %q", cmd.CommandPath(), args)
+				}
+			}
+			return nil
+		},
 		Run: func(cmd *cobra.Command, args []string) {
 			if err = version.PrintAndExitIfRequested(cmdName); err != nil {
 				klog.Exit(err)
 			}
+
+			// Activate logging as soon as possible, after that
+			// show flags with the final logging configuration.
+			if err = logsapi.ValidateAndApply(opts.Logs, utilfeature.DefaultFeatureGate); err != nil {
+				fmt.Fprintf(os.Stderr, "%v\n", err)
+				os.Exit(1)
+			}
+			cliflag.PrintFlags(cmd.Flags())
 
 			if err = opts.Complete(); err != nil {
 				klog.Exit(err)
@@ -61,35 +88,36 @@ func NewSchedulerCommand(ctx context.Context, outOfTreeRegistryOptions ...Option
 				klog.Exit(err)
 			}
 
-			cmd.Flags().VisitAll(func(flag *pflag.Flag) {
-				klog.V(1).Infof("FLAG: --%s=%q", flag.Name, flag.Value)
-			})
-
 			// TODO: start metrics server
 
 			outOfTreeRegistry := make(runtime.Registry)
 			for _, option := range outOfTreeRegistryOptions {
-				if err := option(outOfTreeRegistry); err != nil {
+				if err = option(outOfTreeRegistry); err != nil {
 					klog.Exit(err)
 				}
 			}
 
 			opts.FrameworkOutOfTreeRegistry = outOfTreeRegistry
 
-			sched, err := scheduler.NewScheduler(opts)
-			if err != nil {
-				klog.Exit(err)
+			sched, err2 := scheduler.NewScheduler(opts)
+			if err2 != nil {
+				klog.Exit(err2)
 			}
-			if err = sched.Run(ctx); err != nil {
-				klog.Exit(err)
+			if err2 = sched.Run(ctx); err2 != nil {
+				klog.Exit(err2)
 			}
 		},
 	}
 
-	flags := cmd.Flags()
-	version.AddVersionFlag(flags)
-	opts.AddFlags(flags)
-	utilfeature.DefaultMutableFeatureGate.AddFlag(flags)
+	nfs := opts.Flags
+	version.AddVersionFlag(nfs.FlagSet("global"))
+	globalflag.AddGlobalFlags(nfs.FlagSet("global"), cmd.Name(), logs.SkipLoggingConfigurationFlags())
+	fs := cmd.Flags()
+	for _, f := range nfs.FlagSets {
+		fs.AddFlagSet(f)
+	}
+	cols, _, _ := term.TerminalSize(cmd.OutOrStdout())
+	cliflag.SetUsageAndHelpFunc(cmd, *nfs, cols)
 
 	return cmd
 }

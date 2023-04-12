@@ -117,7 +117,7 @@ type HelmOptions struct {
 	// +kubebuilder:default=300
 	TimeoutSeconds int32 `json:"timeoutSeconds,omitempty"`
 
-	// Wait determines whether the wait operation should be performed after the upgrade is requested.
+	// Wait determines whether the wait operation should be performed after helm install, upgrade or uninstall is requested.
 	//
 	// +optional
 	// +kubebuilder:validation:Type=boolean
@@ -136,17 +136,29 @@ type HelmOptions struct {
 	// +kubebuilder:validation:Type=boolean
 	Replace *bool `json:"replace,omitempty"`
 
-	// Atomic, if true, for install case, will uninstall failed release, for upgrade case, will roll back on failure.
+	// Atomic, for install case, if true, will uninstall failed release.
 	//
 	// +optional
 	// +kubebuilder:validation:Type=boolean
 	Atomic *bool `json:"atomic,omitempty"`
+
+	// UpgradeAtomic, for upgrade case, if true, will roll back failed release.
+	//
+	// +optional
+	// +kubebuilder:validation:Type=boolean
+	UpgradeAtomic *bool `json:"upgradeAtomic,omitempty"`
 
 	// SkipCRDs skips installing CRDs when install flag is enabled during upgrade
 	//
 	// +optional
 	// +kubebuilder:validation:Type=boolean
 	SkipCRDs *bool `json:"skipCRDs,omitempty"`
+
+	// ReplaceCRDs replace all crds in chart and sub charts before upgrade and install, not working when SkipCRDs true
+	//
+	// +optional
+	// +kubebuilder:validation:Type=boolean
+	ReplaceCRDs *bool `json:"replaceCRDs,omitempty"`
 
 	// DisableHooks disables hook processing if set to true.
 	//

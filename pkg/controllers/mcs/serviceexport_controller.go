@@ -86,7 +86,7 @@ func (c *ServiceExportController) Handle(obj interface{}) (requeueAfter *time.Du
 		return nil, nil
 	}
 
-	se, err := c.serviceExportLister.ServiceExports(namespace).Get(seName)
+	cachedSe, err := c.serviceExportLister.ServiceExports(namespace).Get(seName)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			utilruntime.HandleError(fmt.Errorf("service export '%s' in work queue no longer exists", key))
@@ -95,6 +95,7 @@ func (c *ServiceExportController) Handle(obj interface{}) (requeueAfter *time.Du
 		return nil, err
 	}
 
+	se := cachedSe.DeepCopy()
 	seTerminating := se.DeletionTimestamp != nil
 
 	if !utils.ContainsString(se.Finalizers, known.AppFinalizer) && !seTerminating {
@@ -180,9 +181,12 @@ func (c *ServiceExportController) Run(ctx context.Context, parentDedicatedKubeCo
 	controller := yacht.NewController("serviceexport").
 		WithCacheSynced(c.serviceExportInformer.Informer().HasSynced, c.endpointSliceInformer.Informer().HasSynced).
 		WithHandlerFunc(c.Handle)
-	c.serviceExportInformer.Informer().AddEventHandler(controller.DefaultResourceEventHandlerFuncs())
+	_, err := c.serviceExportInformer.Informer().AddEventHandler(controller.DefaultResourceEventHandlerFuncs())
+	if err != nil {
+		return err
+	}
 
-	c.endpointSliceInformer.Informer().AddEventHandler(cache.FilteringResourceEventHandler{
+	_, err = c.endpointSliceInformer.Informer().AddEventHandler(cache.FilteringResourceEventHandler{
 		FilterFunc: func(obj interface{}) bool {
 			endpointSlice := obj.(*discoveryv1.EndpointSlice)
 			if serviceName, ok := endpointSlice.Labels[discoveryv1.LabelServiceName]; ok {
@@ -210,6 +214,9 @@ func (c *ServiceExportController) Run(ctx context.Context, parentDedicatedKubeCo
 			},
 		},
 	})
+	if err != nil {
+		return err
+	}
 
 	controller.Run(ctx)
 	<-ctx.Done()

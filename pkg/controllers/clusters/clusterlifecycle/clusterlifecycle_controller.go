@@ -63,21 +63,24 @@ type Controller struct {
 }
 
 func NewController(clusternetClient clusternetClientSet.Interface,
-	clusterInformer clusterinformers.ManagedClusterInformer, recorder record.EventRecorder) *Controller {
+	clusterInformer clusterinformers.ManagedClusterInformer, recorder record.EventRecorder) (*Controller, error) {
 	c := &Controller{
 		clusternetClient: clusternetClient,
-		workqueue:        workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "managedCluster"),
+		workqueue:        workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ManagedCluster"),
 		clusterLister:    clusterInformer.Lister(),
 		clusterSynced:    clusterInformer.Informer().HasSynced,
 		recorder:         recorder,
 	}
 
-	clusterInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := clusterInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    c.addCluster,
 		UpdateFunc: c.updateCluster,
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	return c
+	return c, nil
 }
 
 func (c *Controller) Run(workers int, stopCh <-chan struct{}) {
