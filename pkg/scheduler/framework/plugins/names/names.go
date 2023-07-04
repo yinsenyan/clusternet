@@ -21,6 +21,10 @@ const (
 
 	DynamicAssigner = "DynamicAssigner"
 
+	TopologyAssigner = "TopologyAssigner"
+
+	TopologyPostBinder = "TopologyPostBinder"
+
 	DefaultBinder = "DefaultBinder"
 
 	TaintToleration = "TaintToleration"

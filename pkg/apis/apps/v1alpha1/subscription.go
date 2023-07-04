@@ -308,7 +308,7 @@ type DynamicDividing struct {
 	//
 	// +required
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=Spread;Binpack
+	// +kubebuilder:validation:Enum=Spread;Binpack;Average;Capacity
 	// +kubebuilder:validation:Type=string
 	// +kubebuilder:default=Spread
 	Strategy DynamicDividingStrategy `json:"strategy"`
@@ -364,6 +364,12 @@ type DynamicDividingStrategy string
 const (
 	// SpreadDividingStrategy spreads out replicas as much as possible.
 	SpreadDividingStrategy DynamicDividingStrategy = "Spread"
+
+	// AverageDividingStrategy set replicas average on domain
+	AverageDividingStrategy DynamicDividingStrategy = "Average"
+
+	// CapacityDividingStrategy set replicas average on domain
+	CapacityDividingStrategy DynamicDividingStrategy = "Capacity"
 
 	// BinpackDividingStrategy aggregates replicas as much as possible.
 	BinpackDividingStrategy DynamicDividingStrategy = "Binpack"

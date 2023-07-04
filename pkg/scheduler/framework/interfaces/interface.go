@@ -22,6 +22,8 @@ package interfaces
 import (
 	"context"
 	"math"
+	"sort"
+	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/types"
@@ -35,21 +37,64 @@ import (
 	schedulerapis "github.com/clusternet/clusternet/pkg/scheduler/apis"
 	"github.com/clusternet/clusternet/pkg/scheduler/cache"
 	"github.com/clusternet/clusternet/pkg/scheduler/parallelize"
+	"github.com/clusternet/clusternet/pkg/utils"
 )
 
 // ClusterScoreList declares a list of clusters and their scores.
 type ClusterScoreList []ClusterScore
 
-func (cs ClusterScoreList) Len() int {
-	return len(cs)
+// sort with descending order by score
+func (cs ClusterScoreList) Len() int           { return len(cs) }
+func (cs ClusterScoreList) Less(i, j int) bool { return cs[i].Score > cs[j].Score }
+func (cs ClusterScoreList) Swap(i, j int)      { cs[i], cs[j] = cs[j], cs[i] }
+
+func (cs ClusterScoreList) ToTargetClusters(feedKeys []string) TargetClusters {
+
+	sort.Sort(cs)
+
+	var result = TargetClusters{
+		Replicas: make(map[string][]int32),
+	}
+
+	for _, cs := range cs {
+		result.BindingClusters = append(result.BindingClusters, cs.NamespacedName)
+		result.Score = append(result.Score, cs.Score)
+	}
+
+	var trs = make([]ClusterReplicas, len(cs))
+	for clusterIndex, clusterScore := range cs {
+		var crs = ClusterReplicas{
+			FeedReplicas: make(map[string][]TopologyReplica),
+		}
+		for feedIndex, feedReplica := range clusterScore.MaxAvailableReplicas {
+			feedKey := feedKeys[feedIndex]
+			tr := frToTr(feedReplica)
+			crs.FeedReplicas[feedKey] = append(crs.FeedReplicas[feedKey], tr...)
+		}
+		trs[clusterIndex] = crs
+	}
+	result.TopologyReplicas = trs
+
+	tmp := make(map[string][]int32)
+	for _, tr := range trs {
+		for feedKey, rs := range tr.FeedReplicas {
+			sum := TopologyReplicasSum(rs)
+			tmp[feedKey] = append(tmp[feedKey], sum)
+		}
+	}
+	result.Replicas = tmp
+	return result
 }
 
-func (cs ClusterScoreList) Less(i, j int) bool {
-	return cs[i].Score > cs[j].Score
-}
-
-func (cs ClusterScoreList) Swap(i, j int) {
-	cs[i], cs[j] = cs[j], cs[i]
+func frToTr(fr map[string]int32) (tr []TopologyReplica) {
+	for domain, replica := range fr {
+		topologys := strings.Split(domain, ",")
+		tr = append(tr, TopologyReplica{
+			Topology: utils.StringsToMap(topologys),
+			Replica:  replica,
+		})
+	}
+	return
 }
 
 // ClusterScore is a struct with cluster id and score.
@@ -59,6 +104,19 @@ type ClusterScore struct {
 	MaxAvailableReplicas FeedReplicas
 }
 
+// FeedReplicas index is feed index, map[string]int32 is topology key replicas
+type FeedReplicas []map[string]int32
+
+func (fp FeedReplicas) Sum() int32 {
+	var sum int32
+	for _, m := range fp {
+		for _, v := range m {
+			sum += v
+		}
+	}
+	return sum
+}
+
 func (cs ClusterScoreList) ClusterNames() []string {
 	clusters := make([]string, 0, len(cs))
 	for _, score := range cs {
@@ -66,8 +124,6 @@ func (cs ClusterScoreList) ClusterNames() []string {
 	}
 	return clusters
 }
-
-type FeedReplicas []*int32
 
 // PluginToClusterReplicas declares a map from plugin name to its ClusterScoreList.
 type PluginToClusterReplicas map[string]ClusterScoreList

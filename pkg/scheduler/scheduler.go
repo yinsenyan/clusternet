@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -311,6 +312,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 	}
 
 	if !admit(sub, finv) {
+		klog.V(3).InfoS("No need to schedule subscription with subs and finv no change", "subscription", klog.KObj(sub))
 		return
 	}
 
@@ -488,6 +490,7 @@ func (sched *Scheduler) addAllEventHandlers() error {
 				sub := obj.(*appsapi.Subscription)
 				sched.lock.Lock()
 				defer sched.lock.Unlock()
+				klog.V(5).Infof("add a Subscription %s/%s to scheduling queue ... ", sub.Namespace, sub.Name)
 				sched.subscribersMap[klog.KObj(sub).String()] = sub.Spec.Subscribers
 				sched.SchedulingQueue.Add(klog.KObj(sub).String())
 			},
@@ -495,11 +498,40 @@ func (sched *Scheduler) addAllEventHandlers() error {
 				oldSub := oldObj.(*appsapi.Subscription)
 				newSub := newObj.(*appsapi.Subscription)
 
+				// support re-schedule for zones number change
+				// only re-schedule with min zones more then current zones or max zones less then current zones
+				if metav1.HasAnnotation(newSub.ObjectMeta, known.AnnoEnableTopology) && newSub.Spec.DividingScheduling.Type == appsapi.DynamicReplicaDividingType {
+					var newMinZone, newMaxZone int
+					curZone := len(oldSub.Status.BindingClusters)
+					newMinZoneStr, isok := newSub.Annotations[known.AnnoTopologyMinZones]
+					newMinZone, err := strconv.Atoi(newMinZoneStr)
+					if !isok || err != nil {
+						klog.Warningf("Subscriptions %s/%s no min zones or annotation values format invied %v", newSub.Namespace, newSub.Name, err)
+						newMinZone = curZone
+					}
+					newMaxZoneStr, isok := newSub.Annotations[known.AnnoTopologyMaxZones]
+					newMaxZone, err = strconv.Atoi(newMaxZoneStr)
+					if !isok || err != nil {
+						klog.Warningf("Subscriptions %s/%s no max zones or annotation values format invied %v", newSub.Namespace, newSub.Name, err)
+						newMaxZone = curZone
+					}
+					if newMinZone > curZone || newMaxZone < curZone {
+						klog.V(5).Infof("Subcriptions %s/%s change zone to %d/%d with current zone %d", newSub.Namespace, newSub.Name, newMinZone, newMaxZone, curZone)
+						sched.lock.Lock()
+						defer sched.lock.Unlock()
+						sched.subscribersMap[klog.KObj(newSub).String()] = newSub.Spec.Subscribers
+						sched.SchedulingQueue.Add(klog.KObj(newSub).String())
+						return
+					}
+				}
+
 				// Decide whether discovery has reported a spec change.
 				if reflect.DeepEqual(oldSub.Spec, newSub.Spec) {
 					klog.V(4).Infof("no updates on the spec of Subscription %s, skipping syncing", klog.KObj(oldSub))
 					return
 				}
+
+				klog.V(5).Infof("add a Subscription %s/%s to scheduling queue ... ", newSub.Namespace, newSub.Name)
 
 				sched.lock.Lock()
 				defer sched.lock.Unlock()
@@ -580,7 +612,7 @@ func (sched *Scheduler) addAllEventHandlers() error {
 
 			// no updates on the labels/taints of ManagedCluster
 			if reflect.DeepEqual(oldMcls.Labels, newMcls.Labels) && reflect.DeepEqual(oldMcls.Spec.Taints, newMcls.Spec.Taints) {
-				klog.V(4).Infof("no updates on the labels/taints of ManagedCluster %s, skipping syncing", klog.KObj(oldMcls))
+				//klog.V(4).Infof("no updates on the labels/taints of ManagedCluster %s, skipping syncing", klog.KObj(oldMcls))
 				return
 			}
 			enqueueSubscriptionForClusterFunc(newMcls, oldMcls)

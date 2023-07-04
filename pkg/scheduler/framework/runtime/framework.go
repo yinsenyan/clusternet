@@ -30,7 +30,6 @@ import (
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
-	utilpointer "k8s.io/utils/pointer"
 
 	appsapi "github.com/clusternet/clusternet/pkg/apis/apps/v1alpha1"
 	clusterapi "github.com/clusternet/clusternet/pkg/apis/clusters/v1beta1"
@@ -415,6 +414,9 @@ func (f *frameworkImpl) RunPrePredictPlugins(ctx context.Context, state *framewo
 	}()
 	for _, pl := range f.prePredictPlugins {
 		status = f.runPrePredictPlugin(ctx, pl, state, sub, finv, clusters)
+		if status != nil && status.Code() == framework.Skip {
+			continue
+		}
 		if !status.IsSuccess() {
 			return framework.AsStatus(fmt.Errorf("running PrePredict plugin %q: %w", pl.Name(), status.AsError()))
 		}
@@ -430,7 +432,14 @@ func (f *frameworkImpl) runPrePredictPlugin(ctx context.Context, pl framework.Pr
 	return status
 }
 
-func (f *frameworkImpl) RunPredictPlugins(ctx context.Context, state *framework.CycleState, sub *appsapi.Subscription, finv *appsapi.FeedInventory, clusters []*clusterapi.ManagedCluster, availableList framework.ClusterScoreList) (res framework.ClusterScoreList, status *framework.Status) {
+func (f *frameworkImpl) RunPredictPlugins(ctx context.Context,
+	state *framework.CycleState,
+	sub *appsapi.Subscription,
+	finv *appsapi.FeedInventory,
+	clusters []*clusterapi.ManagedCluster,
+	availableList framework.ClusterScoreList) (
+	res framework.ClusterScoreList,
+	status *framework.Status) {
 	startTime := time.Now()
 	defer func() {
 		metrics.FrameworkExtensionPointDuration.WithLabelValues(predict, status.Code().String(), f.profileName).Observe(metrics.SinceInSeconds(startTime))
@@ -593,6 +602,9 @@ func (f *frameworkImpl) RunPreAssignPlugins(ctx context.Context, state *framewor
 	}()
 	for _, pl := range f.preAssignPlugins {
 		status = f.runPreAssignPlugin(ctx, pl, state, sub, finv, availableReplicas)
+		if status != nil && status.Code() == framework.Skip {
+			continue
+		}
 		if !status.IsSuccess() {
 			err := status.AsError()
 			klog.ErrorS(err, "Failed running PreAssign plugin", "plugin", pl.Name(), "sub", klog.KObj(sub))
@@ -967,7 +979,8 @@ func mergeFeedReplicas(a, b framework.FeedReplicas) framework.FeedReplicas {
 	res := make(framework.FeedReplicas, len(a))
 	for i := 0; i < len(b); i++ {
 		if a[i] != nil && b[i] != nil {
-			res[i] = utilpointer.Int32(utils.MinInt32(*a[i], *b[i]))
+			res[i] = utils.MergeMapMin(a[i], b[i])
+			//res[i] = utilpointer.Int32(utils.MinInt32(*a[i], *b[i]))
 			continue
 		}
 

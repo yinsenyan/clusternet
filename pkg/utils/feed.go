@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"strings"
 
 	"github.com/davecgh/go-spew/spew"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -181,4 +182,26 @@ func GetFeedKey(feed appsapi.Feed) string {
 	} else {
 		return fmt.Sprintf("%s/%s/%s", feed.APIVersion, feed.Kind, feed.Name)
 	}
+}
+
+func GetFeed(feedKey string) (f appsapi.Feed) {
+	data := strings.Split(feedKey, "/")
+	if len(data) == 4 {
+		f = appsapi.Feed{
+			APIVersion: strings.Join(data[:2], "/"),
+			Kind:       data[2],
+			Namespace:  "default",
+			Name:       data[3],
+		}
+	} else if len(data) == 5 {
+		f = appsapi.Feed{
+			APIVersion: strings.Join(data[:2], "/"),
+			Kind:       data[2],
+			Namespace:  data[3],
+			Name:       data[4],
+		}
+	} else {
+		return appsapi.Feed{}
+	}
+	return
 }

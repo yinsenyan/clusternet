@@ -20,11 +20,13 @@ import (
 	"context"
 	"fmt"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/pointer"
 
 	appsapi "github.com/clusternet/clusternet/pkg/apis/apps/v1alpha1"
+	"github.com/clusternet/clusternet/pkg/known"
 	framework "github.com/clusternet/clusternet/pkg/scheduler/framework/interfaces"
 	"github.com/clusternet/clusternet/pkg/scheduler/framework/plugins/names"
 	"github.com/clusternet/clusternet/pkg/utils"
@@ -48,23 +50,23 @@ var _ framework.AssignPlugin = &DynamicAssigner{}
 var _ framework.PreAssignPlugin = &DynamicAssigner{}
 
 // preAssignState computed at PreAssign and used at Assign.
-type preAssignState struct {
-	deviations []appsapi.FeedOrder
+type PreAssignState struct {
+	Deviations []appsapi.FeedOrder
 }
 
 // Clone the prefilter state.
-func (s *preAssignState) Clone() framework.StateData {
+func (s *PreAssignState) Clone() framework.StateData {
 	return s
 }
 
-func getPreAssignState(cycleState *framework.CycleState) (*preAssignState, error) {
+func getPreAssignState(cycleState *framework.CycleState) (*PreAssignState, error) {
 	c, err := cycleState.Read(preAssignStateKey)
 	if err != nil {
 		// preAssignState doesn't exist, likely PreAssign wasn't invoked.
 		return nil, fmt.Errorf("error reading %q from cycleState: %w", preAssignStateKey, err)
 	}
 
-	s, ok := c.(*preAssignState)
+	s, ok := c.(*PreAssignState)
 	if !ok {
 		return nil, fmt.Errorf("%+v convert to DynamicAssigner.preAssignState error", c)
 	}
@@ -91,7 +93,13 @@ func (pl *DynamicAssigner) PreAssign(ctx context.Context, state *framework.Cycle
 
 	// Scheduler only cares about the deviation replicas in case rescheduling running replicas.
 	// When scaling down, the deviation replicas would be negative.
-	s := new(preAssignState)
+	s := new(PreAssignState)
+	if metav1.HasAnnotation(sub.ObjectMeta, known.AnnoEnableTopology) && !metav1.HasAnnotation(sub.ObjectMeta, known.AnnoTopologyReplicas) {
+		s.Deviations = finv.Spec.Feeds
+		state.Write(preAssignStateKey, s)
+		return nil
+	}
+
 	deviations := make([]appsapi.FeedOrder, len(finv.Spec.Feeds))
 	for i := range finv.Spec.Feeds {
 		deviations[i] = *finv.Spec.Feeds[i].DeepCopy()
@@ -101,7 +109,7 @@ func (pl *DynamicAssigner) PreAssign(ctx context.Context, state *framework.Cycle
 		currentReplicas := utils.SumArrayInt32(sub.Status.Replicas[utils.GetFeedKey(deviations[i].Feed)])
 		deviations[i].DesiredReplicas = pointer.Int32(*deviations[i].DesiredReplicas - currentReplicas)
 	}
-	s.deviations = deviations
+	s.Deviations = deviations
 
 	state.Write(preAssignStateKey, s)
 	return nil
@@ -109,9 +117,14 @@ func (pl *DynamicAssigner) PreAssign(ctx context.Context, state *framework.Cycle
 
 // Assign assigns subscriptions to clusters using the clusternet client.
 func (pl *DynamicAssigner) Assign(ctx context.Context, state *framework.CycleState, sub *appsapi.Subscription, finv *appsapi.FeedInventory, availableReplicas framework.TargetClusters) (framework.TargetClusters, *framework.Status) {
-	klog.V(3).InfoS("Attempting to assign replicas to clusters",
+	klog.V(5).InfoS("Attempting to assign replicas to clusters",
 		"subscription", klog.KObj(sub), "clusters", availableReplicas.BindingClusters)
 	if sub.Spec.DividingScheduling == nil || sub.Spec.DividingScheduling.Type != appsapi.DynamicReplicaDividingType {
+		klog.V(5).Infof("sub %s/%s will skip assigner %s because of scheduling not match ", sub.Namespace, sub.Name, pl.Name())
+		return framework.TargetClusters{}, framework.NewStatus(framework.Skip, "")
+	}
+	if metav1.HasAnnotation(sub.ObjectMeta, known.AnnoEnableTopology) {
+		klog.V(5).Infof("sub %s/%s will skip assigner %s because enable topology scheduling", sub.Namespace, sub.Name, pl.Name())
 		return framework.TargetClusters{}, framework.NewStatus(framework.Skip, "")
 	}
 	s, err := getPreAssignState(state)
@@ -119,7 +132,7 @@ func (pl *DynamicAssigner) Assign(ctx context.Context, state *framework.CycleSta
 		return framework.TargetClusters{}, framework.AsStatus(err)
 	}
 
-	result, err := DynamicDivideReplicas(sub, s.deviations, availableReplicas)
+	result, err := DynamicDivideReplicas(sub, s.Deviations, availableReplicas)
 	if err != nil {
 		return framework.TargetClusters{}, framework.AsStatus(err)
 	}

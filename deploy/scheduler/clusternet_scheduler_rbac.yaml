@@ -4,23 +4,49 @@ kind: ClusterRole
 metadata:
   name: clusternet:scheduler
 rules:
-  - apiGroups: [ "apps.clusternet.io" ]
-    resources: [ "subscriptions", "feedinventories" ]
-    verbs: [ "get", "list", "watch" ]
-  - apiGroups: [ "apps.clusternet.io" ]
-    resources: [ "subscriptions/status" ]
-    verbs: [ "update", "patch" ]
-  - apiGroups: [ "clusters.clusternet.io" ]
-    resources: [ "managedclusters" ]
-    verbs: [ "get", "list", "watch" ]
-  - apiGroups: [ "" ]
-    resources: [ "events" ]
-    verbs: [ "*" ]
-  - apiGroups: [ "coordination.k8s.io" ]
-    resources: [ "leases" ]
-    verbs: [ "*" ]
-  - nonResourceURLs: [ "*" ]
-    verbs: [ "get" ]
+- apiGroups: [ "apps.clusternet.io" ]
+  resources: [ "subscriptions", "feedinventories", "bases" ]
+  verbs: [ "get", "list" , "watch"]
+- apiGroups:
+  - apps.clusternet.io
+  resources:
+  - localizations
+  verbs:
+  - update
+  - get
+  - create
+- apiGroups:
+  - apps.clusternet.io
+  resources:
+  - subscriptions
+  - subscriptions/status
+  verbs:
+  - update
+  - patch
+- apiGroups:
+  - clusters.clusternet.io
+  resources:
+  - managedclusters
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - '*'
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - '*'
+- nonResourceURLs:
+  - '*'
+  verbs:
+  - get
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1

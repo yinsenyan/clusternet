@@ -35,3 +35,13 @@ const (
 	// configuration of a resource for use in a three way diff by UpdateApplyAnnotation.
 	LastAppliedConfigAnnotation = "clusternet.io/last-applied-configuration"
 )
+
+// camp topology annotation key , will remove and import from camp api
+const (
+	AnnoTopologyRegion         = "region.topology.camp.io/name"
+	AnnoEnableTopology         = "topology.camp.io/enable"
+	AnnoTopologyReplicas       = "topology.camp.io/replicas"
+	AnnoTopologyMinZones       = "topology.camp.io/minzones"
+	AnnoTopologyMaxZones       = "topology.camp.io/maxzones"
+	AnnoTopologyReplicasResult = "topology.camp.io/replicasResult"
+)

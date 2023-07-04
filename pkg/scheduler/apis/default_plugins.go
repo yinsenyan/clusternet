@@ -33,7 +33,11 @@ func getDefaultPlugins() *Plugins {
 			},
 		},
 		PostFilter: PluginSet{},
-		PrePredict: PluginSet{},
+		PrePredict: PluginSet{
+			Enabled: []Plugin{
+				{Name: names.Predictor},
+			},
+		},
 		Predict: PluginSet{
 			Enabled: []Plugin{
 				{Name: names.Predictor},
@@ -48,12 +52,14 @@ func getDefaultPlugins() *Plugins {
 		PreAssign: PluginSet{
 			Enabled: []Plugin{
 				{Name: names.DynamicAssigner},
+				{Name: names.TopologyAssigner},
 			},
 		},
 		Assign: PluginSet{
 			Enabled: []Plugin{
 				{Name: names.StaticAssigner},
 				{Name: names.DynamicAssigner},
+				{Name: names.TopologyAssigner},
 			},
 		},
 		Reserve: PluginSet{},
@@ -64,7 +70,11 @@ func getDefaultPlugins() *Plugins {
 				{Name: names.DefaultBinder},
 			},
 		},
-		PostBind: PluginSet{},
+		PostBind: PluginSet{
+			Enabled: []Plugin{
+				{Name: names.TopologyPostBinder},
+			},
+		},
 	}
 }
 

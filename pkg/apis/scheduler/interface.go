@@ -21,7 +21,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/clusternet/clusternet/pkg/apis/apps/v1alpha1"
+	appsapi "github.com/clusternet/clusternet/pkg/apis/apps/v1alpha1"
 )
 
 const (
@@ -30,6 +30,12 @@ const (
 	// DefaultSchedulerName is the default scheduler name
 	DefaultSchedulerName = "default"
 )
+
+// Require declares require for predictor
+type PredictorRequire struct {
+	Requirements appsapi.ReplicaRequirements `json:"requirements,omitempty"`
+	Topologys    []appsapi.Subscriber        `json:"topologys,omitempty"`
+}
 
 // PredictorReplicas indicates a map of label to replicas with this constraint. Here the label constraint
 // could be topology constraints, such as
@@ -55,7 +61,9 @@ type PredictorProvider interface {
 	//    "topology.kubernetes.io/zone=zone1,topology.kubernetes.io/region=region1": 3,
 	//    "topology.kubernetes.io/zone=zone2,topology.kubernetes.io/region=region1": 5,
 	// }.
-	MaxAcceptableReplicas(ctx context.Context, requirements v1alpha1.ReplicaRequirements) (PredictorResults, error)
+	MaxAcceptableReplicas(ctx context.Context, requirements appsapi.ReplicaRequirements) (PredictorResults, error)
+
+	// TopologyReplicas(ctx context.Context, requirements PredictorRequire) (PredictorResults, error)
 
 	// UnschedulableReplicas returns current unschedulable replicas.
 	UnschedulableReplicas(ctx context.Context, gvk metav1.GroupVersionKind, namespacedName string,
@@ -70,6 +78,9 @@ const (
 
 	// SubPathPredict specifies the sub path for predicting replicas
 	SubPathPredict = "/predict"
+
+	// SubPathPredict specifies the sub path for predicting replicas by topology
+	//SubPathPredictTopology = "/predict/topology"
 
 	// SubPathUnscheduled specifies the sub path for listing unscheduled replicas
 	SubPathUnscheduled = "/unscheduled"

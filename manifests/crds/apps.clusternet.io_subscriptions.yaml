@@ -210,6 +210,8 @@ spec:
                         enum:
                         - Spread
                         - Binpack
+                        - Average
+                        - Capacity
                         type: string
                       topologySpreadConstraints:
                         description: TopologySpreadConstraints describes how a group

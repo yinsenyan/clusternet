@@ -17,6 +17,9 @@ limitations under the License.
 package utils
 
 import (
+	"bytes"
+	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -52,6 +55,15 @@ func ContainsString(slice []string, s string) bool {
 	return false
 }
 
+func ContainesMap(slice []map[string]string, m map[string]string) bool {
+	for _, item := range slice {
+		if reflect.DeepEqual(item, m) {
+			return true
+		}
+	}
+	return false
+}
+
 // ContainsPrefix checks if a given slice of strings start with the provided string.
 func ContainsPrefix(slice []string, s string) bool {
 	for _, item := range slice {
@@ -78,6 +90,36 @@ func RemoveString(slice []string, s string) []string {
 		newSlice = nil
 	}
 	return newSlice
+}
+
+func RemoveStringByIndex(slice []string, index int) (result []string) {
+	for i, v := range slice {
+		if i == index {
+			continue
+		}
+		result = append(result, v)
+	}
+	return
+}
+
+func RemoveInt32(slice []int32, index int) (result []int32) {
+	for i, v := range slice {
+		if i == index {
+			continue
+		}
+		result = append(result, v)
+	}
+	return
+}
+
+func RemoveMap(slice []map[string]string, m map[string]string) []map[string]string {
+	var result []map[string]string
+	for _, v := range slice {
+		if !reflect.DeepEqual(v, m) {
+			result = append(result, v)
+		}
+	}
+	return result
 }
 
 func MaxInt(a, b int) int {
@@ -113,4 +155,106 @@ func SumArrayInt32(array []int32) (sum int32) {
 		sum += v
 	}
 	return
+}
+
+func MinIndex(array []int32) int {
+	if len(array) == 1 {
+		return 0
+	}
+	var result int
+	var tmp int32 = array[0]
+	for index, value := range array {
+		if value < tmp {
+			tmp = value
+			result = index
+		}
+	}
+	return result
+}
+
+func SumMapInt32s(m map[string][]int32) (sum []int32) {
+	for _, array := range m {
+		for i, v := range array {
+			sum[i] += v
+		}
+	}
+	return
+}
+
+func SumMapInt(m map[string]int32) (sum int32) {
+	for _, v := range m {
+		sum += v
+	}
+	return sum
+}
+
+func MergeMapMin(a, b map[string]int32) map[string]int32 {
+	for k, v := range a {
+		if value, isok := b[k]; !isok || value > v {
+			b[k] = v
+		}
+	}
+
+	return b
+}
+
+func RemoveDuplicateElement(input []string) (output []string) {
+	tmp := make(map[string]bool)
+	for _, v := range input {
+		tmp[v] = true
+	}
+	for key := range tmp {
+		output = append(output, key)
+	}
+	return
+}
+
+func CompareMap(s []string, m map[string]string) bool {
+	d := make(map[string]string)
+	for _, label := range s {
+		l := strings.Split(label, "=")
+		if len(l) == 2 {
+			d[l[0]] = d[l[1]]
+		}
+	}
+	return reflect.DeepEqual(d, m)
+}
+
+func MapToString(m map[string]string) string {
+	b := new(bytes.Buffer)
+	for k, v := range m {
+		fmt.Fprintf(b, "%s=%s,", k, v)
+	}
+	return b.String()
+}
+
+func StringsToMap(s []string) map[string]string {
+	result := make(map[string]string)
+	for _, str := range s {
+		data := strings.Split(str, "=")
+		if len(data) != 2 {
+			continue
+		} else {
+			result[data[0]] = data[1]
+		}
+	}
+	return result
+}
+
+func GetIndex(array []string, s string) int {
+	for i, v := range array {
+		if s == v {
+			return i
+		}
+	}
+	return -1
+}
+
+func GetMapsIndex(array []map[string]string, m map[string]string) int {
+	for i, v := range array {
+		if reflect.DeepEqual(v, m) {
+			return i
+		}
+	}
+	return -1
 }

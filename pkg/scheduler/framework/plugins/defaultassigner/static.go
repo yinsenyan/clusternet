@@ -19,11 +19,13 @@ package defaultassigner
 import (
 	"context"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
 
 	appsapi "github.com/clusternet/clusternet/pkg/apis/apps/v1alpha1"
 	clusterapi "github.com/clusternet/clusternet/pkg/apis/clusters/v1beta1"
+	"github.com/clusternet/clusternet/pkg/known"
 	framework "github.com/clusternet/clusternet/pkg/scheduler/framework/interfaces"
 	"github.com/clusternet/clusternet/pkg/scheduler/framework/plugins/names"
 )
@@ -50,9 +52,14 @@ func (pl *StaticAssigner) Name() string {
 
 // Assign assigns subscriptions to clusters using the clusternet client.
 func (pl *StaticAssigner) Assign(ctx context.Context, state *framework.CycleState, sub *appsapi.Subscription, finv *appsapi.FeedInventory, availableReplicas framework.TargetClusters) (framework.TargetClusters, *framework.Status) {
-	klog.V(3).InfoS("Attempting to assign replicas to clusters",
+	klog.V(5).InfoS("Attempting to assign replicas to clusters",
 		"subscription", klog.KObj(sub), "clusters", availableReplicas.BindingClusters)
 	if sub.Spec.DividingScheduling == nil || sub.Spec.DividingScheduling.Type != appsapi.StaticReplicaDividingType {
+		klog.V(5).Infof("sub %s/%s will skip assigner %s because schedule type not match ", sub.Namespace, sub.Name, pl.Name())
+		return framework.TargetClusters{}, framework.NewStatus(framework.Skip, "")
+	}
+	if metav1.HasAnnotation(sub.ObjectMeta, known.AnnoEnableTopology) {
+		klog.V(5).Infof("sub %s/%s will skip assigner %s because of enable topology scheduling ", sub.Namespace, sub.Name, pl.Name())
 		return framework.TargetClusters{}, framework.NewStatus(framework.Skip, "")
 	}
 	var err error
