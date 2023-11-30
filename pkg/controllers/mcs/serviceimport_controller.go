@@ -60,12 +60,13 @@ type ServiceImportController struct {
 	serviceImportInformer mcsv1alpha1.ServiceImportInformer
 	endpointSliceInformer discoveryinformerv1.EndpointSliceInformer
 	mcsInformerFactory    mcsInformers.SharedInformerFactory
+	yachtController       *yacht.Controller
 }
 
 func NewServiceImportController(kubeclient kubernetes.Interface, epsInformer discoveryinformerv1.EndpointSliceInformer, mcsClientset *mcsclientset.Clientset,
-	mcsInformerFactory mcsInformers.SharedInformerFactory) *ServiceImportController {
+	mcsInformerFactory mcsInformers.SharedInformerFactory) (*ServiceImportController, error) {
 	siInformer := mcsInformerFactory.Multicluster().V1alpha1().ServiceImports()
-	si := &ServiceImportController{
+	sic := &ServiceImportController{
 		mcsClientset:          mcsClientset,
 		localk8sClient:        kubeclient,
 		serviceImportInformer: siInformer,
@@ -74,7 +75,31 @@ func NewServiceImportController(kubeclient kubernetes.Interface, epsInformer dis
 		endpointSliceInformer: epsInformer,
 		mcsInformerFactory:    mcsInformerFactory,
 	}
-	return si
+
+	// add event handler for ServiceImport
+	yachtcontroller := yacht.NewController("serviceimport").
+		WithCacheSynced(siInformer.Informer().HasSynced, epsInformer.Informer().HasSynced).
+		WithHandlerFunc(sic.Handle).
+		WithEnqueueFilterFunc(preFilter)
+	_, err := siInformer.Informer().AddEventHandler(yachtcontroller.DefaultResourceEventHandlerFuncs())
+	if err != nil {
+		klog.Fatalf("failed to add event handler for serviceimport: %w", err)
+		return nil, err
+	}
+	_, err = epsInformer.Informer().AddEventHandler(cache.FilteringResourceEventHandler{
+		FilterFunc: func(obj interface{}) bool {
+			if si, err2 := sic.getServiceImportFromEndpointSlice(obj); err2 == nil {
+				yachtcontroller.Enqueue(si)
+			}
+			return false
+		},
+	})
+	if err != nil {
+		klog.Fatalf("failed to add event handler for serviceimport: %w", err)
+		return nil, err
+	}
+	sic.yachtController = yachtcontroller
+	return sic, nil
 }
 
 func (c *ServiceImportController) Handle(obj interface{}) (requeueAfter *time.Duration, err error) {
@@ -132,7 +157,7 @@ func (c *ServiceImportController) Handle(obj interface{}) (requeueAfter *time.Du
 		known.LabelServiceNameSpace: rawServiceNamespace,
 	}
 
-	endpointSliceList, err := utils.RemoveUnexistEndpointslice(c.endpointSlicesLister, corev1.NamespaceAll,
+	endpointSliceList, err := utils.RemoveNonexistentEndpointslice(c.endpointSlicesLister, corev1.NamespaceAll,
 		srcLabelMap, c.localk8sClient, namespace, dstLabelMap)
 	if err != nil {
 		d := time.Second
@@ -238,40 +263,22 @@ func (c *ServiceImportController) updateServiceStatus(svcImport *v1alpha1.Servic
 			return nil
 		}
 
-		if updated, err := c.localk8sClient.CoreV1().Services(derivedService.Namespace).Get(context.TODO(), derivedService.Name, metav1.GetOptions{}); err == nil {
-			// make a copy so we don't mutate the shared cache
+		updated, err2 := c.localk8sClient.CoreV1().Services(derivedService.Namespace).Get(context.TODO(),
+			derivedService.Name, metav1.GetOptions{})
+		if err2 == nil {
+			// make a copy, so we don't mutate the shared cache
 			derivedService = updated.DeepCopy()
-		} else {
-			utilruntime.HandleError(fmt.Errorf("error getting updated Service %q from lister: %v", derivedService.Name, err))
+			return nil
 		}
-		return err
+		utilruntime.HandleError(fmt.Errorf("error getting updated Service %q from lister: %v", derivedService.Name,
+			err2))
+		return err2
 	})
 }
 
 func (c *ServiceImportController) Run(ctx context.Context) {
 	c.mcsInformerFactory.Start(ctx.Done())
-	controller := yacht.NewController("serviceimport").
-		WithCacheSynced(c.serviceImportInformer.Informer().HasSynced, c.endpointSliceInformer.Informer().HasSynced).
-		WithHandlerFunc(c.Handle).WithEnqueueFilterFunc(preFilter)
-	_, err := c.serviceImportInformer.Informer().AddEventHandler(controller.DefaultResourceEventHandlerFuncs())
-	if err != nil {
-		klog.Fatalf("failed to add event handler for serviceimport: %w", err)
-		return
-	}
-	_, err = c.endpointSliceInformer.Informer().AddEventHandler(cache.FilteringResourceEventHandler{
-		FilterFunc: func(obj interface{}) bool {
-			if si, err := c.getServiceImportFromEndpointSlice(obj); err == nil {
-				controller.Enqueue(si)
-			}
-			return false
-		},
-	})
-	if err != nil {
-		klog.Fatalf("failed to add event handler for serviceimport: %w", err)
-		return
-	}
-
-	controller.Run(ctx)
+	c.yachtController.Run(ctx)
 }
 
 // recycleServiceImport recycle derived service and derived endpoint slices.
@@ -350,8 +357,16 @@ func servicePorts(svcImport *v1alpha1.ServiceImport) []corev1.ServicePort {
 }
 
 // preFilter filter ServiceImport if has no label known.LabelServiceName and known.LabelServiceNameSpace
-func preFilter(oldObj, _ interface{}) (bool, error) {
-	si := oldObj.(*v1alpha1.ServiceImport)
+func preFilter(oldObj, newObj interface{}) (bool, error) {
+	var si *v1alpha1.ServiceImport
+	if newObj == nil {
+		// Delete
+		si = oldObj.(*v1alpha1.ServiceImport)
+	} else {
+		// Add or Update
+		si = newObj.(*v1alpha1.ServiceImport)
+	}
+
 	if si.Spec.Type != v1alpha1.ClusterSetIP {
 		return false, nil
 	}

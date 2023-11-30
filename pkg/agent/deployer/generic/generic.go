@@ -72,7 +72,11 @@ func NewDeployer(syncMode clusterapi.ClusterSyncMode, appPusherEnabled bool,
 	appDeployerConfig *rest.Config, clusternetClient *clusternetclientset.Clientset,
 	clusternetInformerFactory clusternetinformers.SharedInformerFactory,
 	recorder record.EventRecorder) (*Deployer, error) {
-	mapper, err := apiutil.NewDynamicRESTMapper(appDeployerConfig, apiutil.WithLazyDiscovery)
+	httpClient, err := rest.HTTPClientFor(appDeployerConfig)
+	if err != nil {
+		return nil, err
+	}
+	mapper, err := apiutil.NewDynamicRESTMapper(appDeployerConfig, httpClient)
 	if err != nil {
 		return nil, err
 	}
@@ -107,18 +111,18 @@ func NewDeployer(syncMode clusterapi.ClusterSyncMode, appPusherEnabled bool,
 	return deployer, nil
 }
 
-func (deployer *Deployer) Run(workers int, stopCh <-chan struct{}) {
+func (deployer *Deployer) Run(workers int, ctx context.Context) {
 	klog.Info("starting generic deployer...")
 	defer klog.Info("shutting generic deployer")
 
 	// Wait for the caches to be synced before starting workers
-	if !cache.WaitForNamedCacheSync("generic-deployer", stopCh, deployer.descSynced) {
+	if !cache.WaitForNamedCacheSync("generic-deployer", ctx.Done(), deployer.descSynced) {
 		return
 	}
 
-	go deployer.descController.Run(workers, stopCh)
+	go deployer.descController.Run(workers, ctx)
 
-	<-stopCh
+	<-ctx.Done()
 }
 
 func (deployer *Deployer) handleDescription(desc *appsapi.Description) error {

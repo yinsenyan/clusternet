@@ -19,13 +19,14 @@ limitations under the License.
 package apis
 
 import (
-	"encoding/json"
 	"math"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
+
+	"github.com/clusternet/clusternet/pkg/utils"
 )
 
 // SchedulerConfiguration configures a scheduler
@@ -37,6 +38,28 @@ type SchedulerConfiguration struct {
 	// scheduler name. subscription that don't specify any scheduler name are scheduled
 	// with the "default" profile, if present here.
 	Profiles []SchedulerProfile `yaml:"profiles,omitempty"`
+
+	// PercentageOfClustersToScore is the percentage of all clusters that once found feasible
+	// for running a subscription, the scheduler stops its search for more feasible clusters.
+	// This helps improve scheduler's performance. Scheduler always tries to find
+	// at least "minFeasibleClustersToFind" feasible clusters no matter what the value of this flag is.
+	// Example: if the total size is 500 clusters and the value of this flag is 30,
+	// then scheduler stops finding further feasible clusters once it finds 150 feasible clusters.
+	// When the value is 0, default percentage (5%--50% based on the size of the clusters) of the
+	// clusters will be scored. It is overridden by profile level PercentageOfClustersToScore.
+	PercentageOfClustersToScore *int32 `json:"percentageOfClustersToScore,omitempty"`
+
+	// PercentageOfClustersToTolerate is the percentage of all feasible clusters that once found not responsive
+	// when scheduling a subscription.
+	// Currently, this flag is only used in dynamic scheduling.
+	// When the predictor fails to get result for a feasible cluster, the scheduler framework will tolerate such
+	// exception and continue getting scheduling results for other feasible clusters.
+	// The predicting replicas for those failed or unresponsive clusters will be set to nil (0).
+	// This helps improve scheduler's performance on dynamic scheduling with predictors.
+	// Example: if the number of feasible clusters for a subscription with dynamic scheduling strategy is 100 and the
+	// value of this flag is 10, then the predictor in the scheduling algorithm will ignore at most 10 failed
+	// predicting results. If there are more than 10 failures, this scheduling should be marked as failure.
+	PercentageOfClustersToTolerate *int32 `json:"percentageOfClustersToTolerate,omitempty"`
 }
 
 // SchedulerProfile is a scheduling profile.
@@ -82,7 +105,7 @@ func (r *RawExtension) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		return err
 	}
 	var err error
-	r.Raw, err = json.Marshal(tmp)
+	r.Raw, err = utils.Marshal(tmp)
 	return err
 }
 
@@ -173,7 +196,12 @@ const (
 	// DefaultPercentageOfClustersToScore defines the percentage of clusters of all clusters
 	// that once found feasible, the scheduler stops looking for more clusters.
 	// A value of 0 means adaptive, meaning the scheduler figures out a proper default.
-	DefaultPercentageOfClustersToScore = 0
+	DefaultPercentageOfClustersToScore = int32(0)
+
+	// DefaultPercentageOfClustersToTolerate defines the percentage of clusters of all feasible clusters
+	// that once found not responsive, the scheduler tolerates the failure and continues getting predicting results
+	// for other clusters.
+	DefaultPercentageOfClustersToTolerate = int32(10)
 
 	// MaxCustomPriorityScore is the max score UtilizationShapePoint expects.
 	MaxCustomPriorityScore int64 = 10

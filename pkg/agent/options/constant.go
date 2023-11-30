@@ -65,8 +65,12 @@ const (
 	// PredictorPort flag specifies the port on which to serve built-in predictor
 	PredictorPort = "predictor-port"
 
-	// LabelAggregateThreshold 0.8 means 80% of work nodes in child clusters labels in common will be aggregated to parent.
+	// LabelAggregateThreshold flag specifies the threshold of common node labels that will be aggregated
+	// to ManagedCluster object in parent cluster.
 	LabelAggregateThreshold = "labels-aggregate-threshold"
+
+	// LabelAggregatePrefix flag specifies the label prefix to be aggregated
+	LabelAggregatePrefix = "labels-aggregate-prefix"
 )
 
 // default values
@@ -82,12 +86,9 @@ const (
 	// ClusterNamespaceMaxLength is the max length for clusternamespace
 	ClusterNamespaceMaxLength = 63
 
-	// DefaultRandomUIDLength is the default length for random uid
-	DefaultRandomUIDLength = 5
-
-	nameFmt      = "[a-z0-9]([-a-z0-9]*[a-z0-9])?([a-z0-9]([-a-z0-9]*[a-z0-9]))*"
-	namespaceFmt = "[a-z0-9]([-a-z0-9]*[a-z0-9])?"
-
+	nameFmt                              = "[a-z0-9]([-a-z0-9]*[a-z0-9])?([a-z0-9]([-a-z0-9]*[a-z0-9]))*"
+	namespaceFmt                         = "[a-z0-9]([-a-z0-9]*[a-z0-9])?"
+	serviceAccountTokenFmt               = `[A-Za-z0-9-_]*\.[A-Za-z0-9-_]*\.[A-Za-z0-9-_]*`
 	DefaultClusterStatusCollectFrequency = 20 * time.Second
 	DefaultClusterStatusReportFrequency  = 3 * time.Minute
 )

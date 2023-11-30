@@ -31,10 +31,12 @@ import (
 
 	clusterapi "github.com/clusternet/clusternet/pkg/apis/clusters/v1beta1"
 	"github.com/clusternet/clusternet/pkg/features"
+	"github.com/clusternet/clusternet/pkg/known"
 )
 
 var validateClusterNameRegex = regexp.MustCompile(nameFmt)
 var validateClusterNamespaceRegex = regexp.MustCompile(namespaceFmt)
+var validateServiceAccountTokenRegex = regexp.MustCompile(serviceAccountTokenFmt)
 
 // ClusterRegistrationOptions holds the command-line options about cluster registration
 type ClusterRegistrationOptions struct {
@@ -62,9 +64,13 @@ type ClusterRegistrationOptions struct {
 	// UseMetricsServer specifies whether to collect metrics from metrics server
 	UseMetricsServer bool
 
-	// LabelAggregateThreshold specifies the threshold of common labels in child cluster nodes should be aggregated to parent
-	// e.g LabelAggregateThreshold 0.8  means 80% of work nodes in child clusters labels in common will be aggregated to parent.
+	// LabelAggregateThreshold specifies the threshold of common node labels that will be aggregated to ManagedCluster
+	// object in parent cluster. e.g. LabelAggregateThreshold 0.8 means if >=80% nodes in current child cluster have
+	// such common labels, then these labels will be labeled to ManagedCluster object.
 	LabelAggregateThreshold float32
+
+	// LabelAggregatePrefix specifies the prefixes of node labels that should be aggregated
+	LabelAggregatePrefix []string
 
 	// TODO: check ca hash
 }
@@ -78,6 +84,7 @@ func NewClusterRegistrationOptions() *ClusterRegistrationOptions {
 		ClusterStatusReportFrequency:  metav1.Duration{Duration: DefaultClusterStatusReportFrequency},
 		ClusterStatusCollectFrequency: metav1.Duration{Duration: DefaultClusterStatusCollectFrequency},
 		LabelAggregateThreshold:       0.8,
+		LabelAggregatePrefix:          []string{known.NodeLabelsKeyPrefix},
 	}
 }
 
@@ -107,7 +114,9 @@ func (opts *ClusterRegistrationOptions) AddFlagSets(fss *cliflag.NamedFlagSets) 
 	mgmtfs.StringVar(&opts.ClusterLabels, ClusterLabels, opts.ClusterLabels,
 		"Specify the labels for the child cluster, split by `,`")
 	mgmtfs.Float32Var(&opts.LabelAggregateThreshold, LabelAggregateThreshold, opts.LabelAggregateThreshold,
-		"Specifies the threshold of common labels in child cluster nodes should be aggregated to parent")
+		"Specifies the threshold of common node labels that will be aggregated to ManagedCluster in parent cluster")
+	mgmtfs.StringArrayVar(&opts.LabelAggregatePrefix, LabelAggregatePrefix, opts.LabelAggregatePrefix,
+		"Specifies the desired prefix of node labels to be aggregated")
 
 	mfs := fss.FlagSet("cluster health status")
 	mfs.DurationVar(&opts.ClusterStatusReportFrequency.Duration, ClusterStatusReportFrequency, opts.ClusterStatusReportFrequency.Duration,
@@ -119,7 +128,7 @@ func (opts *ClusterRegistrationOptions) AddFlagSets(fss *cliflag.NamedFlagSets) 
 
 // Complete completes all the required options.
 func (opts *ClusterRegistrationOptions) Complete() []error {
-	allErrs := []error{}
+	var allErrs []error
 
 	opts.ClusterName = strings.TrimSpace(opts.ClusterName)
 	opts.ClusterNamePrefix = strings.TrimSpace(opts.ClusterNamePrefix)
@@ -129,7 +138,7 @@ func (opts *ClusterRegistrationOptions) Complete() []error {
 
 // Validate validates all the required options.
 func (opts *ClusterRegistrationOptions) Validate() []error {
-	allErrs := []error{}
+	var allErrs []error
 
 	if len(opts.ParentURL) == 0 {
 		klog.Exitf("please specify a parent cluster url by flag --%s", ClusterRegistrationURL)
@@ -170,9 +179,9 @@ func (opts *ClusterRegistrationOptions) Validate() []error {
 			opts.ClusterType, supportedClusterTypes.List()))
 	}
 
-	if len(opts.ClusterNamePrefix) > ClusterNameMaxLength-DefaultRandomUIDLength-1 {
+	if len(opts.ClusterNamePrefix) > ClusterNameMaxLength-known.DefaultRandomIDLength-1 {
 		allErrs = append(allErrs, fmt.Errorf("cluster name prefix %s is longer than %d",
-			opts.ClusterName, ClusterNameMaxLength-DefaultRandomUIDLength))
+			opts.ClusterName, ClusterNameMaxLength-known.DefaultRandomIDLength))
 	}
 
 	switch opts.ClusterSyncMode {
@@ -188,7 +197,7 @@ func (opts *ClusterRegistrationOptions) Validate() []error {
 	}
 
 	// once getting registered, expired bootstrap tokens do no harm
-	if !bootstraputil.IsValidBootstrapToken(opts.BootstrapToken) {
+	if !bootstraputil.IsValidBootstrapToken(opts.BootstrapToken) && !validateServiceAccountTokenRegex.MatchString(opts.BootstrapToken) {
 		allErrs = append(allErrs, fmt.Errorf("the bootstrap token %q is invalid", opts.BootstrapToken))
 	}
 

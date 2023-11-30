@@ -32,29 +32,31 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	apiserver "k8s.io/apiserver/pkg/server"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/client-go/util/workqueue"
 	controllermanagerapp "k8s.io/controller-manager/app"
 	"k8s.io/controller-manager/pkg/clientbuilder"
 	"k8s.io/klog/v2"
 
 	appsapi "github.com/clusternet/clusternet/pkg/apis/apps/v1alpha1"
 	clusterapi "github.com/clusternet/clusternet/pkg/apis/clusters/v1beta1"
+	"github.com/clusternet/clusternet/pkg/features"
 	clusternet "github.com/clusternet/clusternet/pkg/generated/clientset/versioned"
 	informers "github.com/clusternet/clusternet/pkg/generated/informers/externalversions"
 	applisters "github.com/clusternet/clusternet/pkg/generated/listers/apps/v1alpha1"
 	"github.com/clusternet/clusternet/pkg/known"
 	"github.com/clusternet/clusternet/pkg/scheduler/algorithm"
-	"github.com/clusternet/clusternet/pkg/scheduler/apis"
+	schedulerapis "github.com/clusternet/clusternet/pkg/scheduler/apis"
 	schedulercache "github.com/clusternet/clusternet/pkg/scheduler/cache"
 	framework "github.com/clusternet/clusternet/pkg/scheduler/framework/interfaces"
 	"github.com/clusternet/clusternet/pkg/scheduler/framework/plugins"
 	frameworkruntime "github.com/clusternet/clusternet/pkg/scheduler/framework/runtime"
+	"github.com/clusternet/clusternet/pkg/scheduler/internal/queue"
 	"github.com/clusternet/clusternet/pkg/scheduler/metrics"
 	"github.com/clusternet/clusternet/pkg/scheduler/options"
 	"github.com/clusternet/clusternet/pkg/scheduler/parallelize"
@@ -95,7 +97,7 @@ type Scheduler struct {
 	scheduleAlgorithm algorithm.ScheduleAlgorithm
 
 	// SchedulingQueue holds subscriptions to be scheduled
-	SchedulingQueue workqueue.RateLimitingInterface
+	SchedulingQueue queue.SchedulingQueue
 
 	// Profiles are the scheduling profiles.
 	Profiles profile.Map
@@ -136,10 +138,14 @@ func NewScheduler(schedulerOptions *options.SchedulerOptions) (*Scheduler, error
 	recorder := broadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: "clusternet-scheduler"})
 
 	schedulerCache := schedulercache.New(clusternetInformerFactory.Clusters().V1beta1().ManagedClusters().Lister())
+	percentageOfClustersToScore := schedulerapis.DefaultPercentageOfClustersToScore
+	if schedulerOptions.SchedulerConfiguration != nil && schedulerOptions.SchedulerConfiguration.PercentageOfClustersToScore != nil {
+		percentageOfClustersToScore = *schedulerOptions.SchedulerConfiguration.PercentageOfClustersToScore
+	}
 
 	// support out of tree plugins
 	registry := plugins.NewInTreeRegistry()
-	if err := registry.Merge(schedulerOptions.FrameworkOutOfTreeRegistry); err != nil {
+	if err = registry.Merge(schedulerOptions.FrameworkOutOfTreeRegistry); err != nil {
 		return nil, err
 	}
 	sched := &Scheduler{
@@ -153,20 +159,29 @@ func NewScheduler(schedulerOptions *options.SchedulerOptions) (*Scheduler, error
 		inventoryLister:           clusternetInformerFactory.Apps().V1alpha1().FeedInventories().Lister(),
 		inventorySynced:           clusternetInformerFactory.Apps().V1alpha1().FeedInventories().Informer().HasSynced,
 		registry:                  registry,
-		scheduleAlgorithm:         algorithm.NewGenericScheduler(schedulerCache),
-		SchedulingQueue:           workqueue.NewNamedRateLimitingQueue(workqueue.DefaultItemBasedRateLimiter(), "clusternet-scheduler"),
+		scheduleAlgorithm:         algorithm.NewGenericScheduler(schedulerCache, percentageOfClustersToScore),
 		subscribersMap:            make(map[string][]appsapi.Subscriber),
+		SchedulingQueue: queue.NewSchedulingQueue(
+			framework.Less,
+		),
 	}
 
-	var profiles []apis.SchedulerProfile
+	var percentageOfClustersToTolerate int32
+	var profiles []schedulerapis.SchedulerProfile
 	if schedulerOptions.SchedulerConfiguration != nil {
 		profiles = schedulerOptions.SchedulerConfiguration.Profiles
+		if schedulerOptions.SchedulerConfiguration.PercentageOfClustersToTolerate != nil {
+			percentageOfClustersToTolerate = *schedulerOptions.SchedulerConfiguration.PercentageOfClustersToTolerate
+		}
 	}
 	//add default profile
 	if len(profiles) == 0 {
-		cfg := &apis.SchedulerConfiguration{}
-		apis.SetDefaultsSchedulerConfiguration(cfg)
-		profiles = append([]apis.SchedulerProfile(nil), cfg.Profiles...)
+		cfg := &schedulerapis.SchedulerConfiguration{}
+		schedulerapis.SetDefaultsSchedulerConfiguration(cfg)
+		if cfg.PercentageOfClustersToTolerate != nil {
+			percentageOfClustersToTolerate = *cfg.PercentageOfClustersToTolerate
+		}
+		profiles = append([]schedulerapis.SchedulerProfile(nil), cfg.Profiles...)
 	}
 	profileMap, err := profile.NewMap(profiles, sched.registry,
 		frameworkruntime.WithEventRecorder(recorder),
@@ -176,6 +191,7 @@ func NewScheduler(schedulerOptions *options.SchedulerOptions) (*Scheduler, error
 		frameworkruntime.WithKubeConfig(clientConfig),
 		frameworkruntime.WithParallelism(parallelize.DefaultParallelism),
 		frameworkruntime.WithRunAllFilters(false),
+		frameworkruntime.WithPercentageOfClustersToTolerate(percentageOfClustersToTolerate),
 	)
 	if err != nil {
 		return nil, err
@@ -191,6 +207,7 @@ func NewScheduler(schedulerOptions *options.SchedulerOptions) (*Scheduler, error
 
 // Run begins watching and scheduling. It starts scheduling and blocked until the context is done.
 func (sched *Scheduler) Run(ctx context.Context) error {
+	sched.SchedulingQueue.Run()
 	err := sched.schedulerOptions.Config()
 	if err != nil {
 		return err
@@ -200,14 +217,18 @@ func (sched *Scheduler) Run(ctx context.Context) error {
 	}
 	// Start up the metrics and healthz server.
 	if sched.SecureServing != nil {
-		handler := controllermanagerapp.BuildHandlerChain(utils.NewHealthzAndMetricsHandler(sched.schedulerOptions.DebuggingOptions), nil, nil)
+		handler := controllermanagerapp.BuildHandlerChain(
+			utils.NewHealthzAndMetricsHandler("clusternet-scheduler", sched.schedulerOptions.DebuggingOptions),
+			nil,
+			nil,
+		)
 		if _, _, err = sched.SecureServing.Serve(handler, 0, ctx.Done()); err != nil {
 			// fail early for secure handlers, removing the old error loop from above
 			return fmt.Errorf("failed to start secure server: %v", err)
 		}
 	}
 
-	defer sched.SchedulingQueue.ShutDown()
+	defer sched.SchedulingQueue.Close()
 
 	// Start all informers.
 	sched.ClusternetInformerFactory.Start(ctx.Done())
@@ -262,29 +283,26 @@ func (sched *Scheduler) Run(ctx context.Context) error {
 // scheduleOne does the entire scheduling workflow for a single subscription.
 // It is serialized on the scheduling algorithm's cluster fitting.
 func (sched *Scheduler) scheduleOne(ctx context.Context) {
-	key, shutdown := sched.SchedulingQueue.Get()
-	if shutdown {
-		klog.Error("failed to get next unscheduled subscription from closed queue")
-		return
-	}
-	defer sched.SchedulingQueue.Done(key)
-
-	// TODO: scheduling
-	// Convert the namespace/name string into a distinct namespace and name
-	ns, name, err := cache.SplitMetaNamespaceKey(key.(string))
+	subInfo, err := sched.SchedulingQueue.Pop()
 	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("invalid resource key: %s", key))
+		klog.Errorf("Error while retrieving next subscription from scheduling queue: %v", err)
 		return
 	}
+	ns := subInfo.Subscription.Namespace
+	name := subInfo.Subscription.Name
+	klog.V(4).Infof("About to try and schedule subscription %v/%v", ns, name)
 
 	sub, err := sched.subsLister.Subscriptions(ns).Get(name)
 	if err != nil {
 		if !errors.IsNotFound(err) {
 			utilruntime.HandleError(err)
-			sched.SchedulingQueue.AddRateLimited(key)
+			if aerr := sched.SchedulingQueue.AddUnschedulableIfNotPresent(subInfo); aerr != nil {
+				klog.ErrorS(aerr, "requeue subscription failed", "subscription", klog.KObj(subInfo.Subscription))
+			}
 		}
 		return
 	}
+	subInfo.Subscription = sub
 	klog.V(3).InfoS("Attempting to schedule subscription", "subscription", klog.KObj(sub))
 	fwk, err := sched.frameworkForSubscription(sub)
 	if err != nil {
@@ -297,7 +315,9 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 		if err != nil {
 			if !errors.IsNotFound(err) {
 				utilruntime.HandleError(err)
-				sched.SchedulingQueue.AddRateLimited(key)
+				if aerr := sched.SchedulingQueue.AddUnschedulableIfNotPresent(subInfo); aerr != nil {
+					klog.ErrorS(aerr, "requeue subscription failed", "subscription", klog.KObj(subInfo.Subscription))
+				}
 			}
 			return
 		}
@@ -323,7 +343,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 
 	scheduleResult, err := sched.scheduleAlgorithm.Schedule(schedulingCycleCtx, fwk, state, sub, finv)
 	if err != nil {
-		sched.handleSchedulingFailure(fwk, sub, err, ReasonUnschedulable)
+		sched.handleSchedulingFailure(fwk, subInfo, err, ReasonUnschedulable)
 		if !strings.Contains(err.Error(), "clusters are available") {
 			return
 		}
@@ -336,7 +356,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 		metrics.SubscriptionScheduleError(fwk.ProfileName(), metrics.SinceInSeconds(start))
 		// trigger un-reserve to clean up state associated with the reserved subscription
 		fwk.RunReservePluginsUnreserve(schedulingCycleCtx, state, sub, targetClusters)
-		sched.handleSchedulingFailure(fwk, sub, sts.AsError(), SchedulerError)
+		sched.handleSchedulingFailure(fwk, subInfo, sts.AsError(), SchedulerError)
 		return
 	}
 
@@ -353,14 +373,14 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 		}
 		// One of the plugins returned status different from success or wait.
 		fwk.RunReservePluginsUnreserve(schedulingCycleCtx, state, sub, targetClusters)
-		sched.handleSchedulingFailure(fwk, sub, runPermitStatus.AsError(), reason)
+		sched.handleSchedulingFailure(fwk, subInfo, runPermitStatus.AsError(), reason)
 		return
 	}
 
 	// bind the subscription to multiple clusters asynchronously (we can do this b/c of the assumption step above).
 	go func() {
-		bindingCycleCtx, cancel := context.WithCancel(ctx)
-		defer cancel()
+		bindingCycleCtx, cancel2 := context.WithCancel(ctx)
+		defer cancel2()
 		metrics.SchedulerGoroutines.WithLabelValues(metrics.Binding).Inc()
 		defer metrics.SchedulerGoroutines.WithLabelValues(metrics.Binding).Dec()
 
@@ -376,7 +396,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 			}
 			// trigger un-reserve plugins to clean up state associated with the reserved subscription
 			fwk.RunReservePluginsUnreserve(bindingCycleCtx, state, sub, targetClusters)
-			sched.handleSchedulingFailure(fwk, sub, waitOnPermitStatus.AsError(), reason)
+			sched.handleSchedulingFailure(fwk, subInfo, waitOnPermitStatus.AsError(), reason)
 			return
 		}
 
@@ -386,19 +406,17 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 			metrics.SubscriptionScheduleError(fwk.ProfileName(), metrics.SinceInSeconds(start))
 			// trigger un-reserve plugins to clean up state associated with the reserved subscription
 			fwk.RunReservePluginsUnreserve(bindingCycleCtx, state, sub, targetClusters)
-			sched.handleSchedulingFailure(fwk, sub, preBindStatus.AsError(), SchedulerError)
+			sched.handleSchedulingFailure(fwk, subInfo, preBindStatus.AsError(), SchedulerError)
 			return
 		}
 
-		err := sched.bind(bindingCycleCtx, state, fwk, sub, targetClusters)
+		err = sched.bind(bindingCycleCtx, state, fwk, sub, targetClusters)
 		if err != nil {
 			metrics.SubscriptionScheduleError(fwk.ProfileName(), metrics.SinceInSeconds(start))
 			// trigger un-reserve plugins to clean up state associated with the reserved subscription
 			fwk.RunReservePluginsUnreserve(bindingCycleCtx, state, sub, targetClusters)
-			sched.handleSchedulingFailure(fwk, sub, fmt.Errorf("binding rejected: %w", err), SchedulerError)
+			sched.handleSchedulingFailure(fwk, subInfo, fmt.Errorf("binding rejected: %w", err), SchedulerError)
 		} else {
-			sched.SchedulingQueue.Forget(key)
-
 			metrics.SubscriptionScheduled(fwk.ProfileName(), metrics.SinceInSeconds(start))
 
 			// Run "postbind" plugins.
@@ -437,7 +455,8 @@ func (sched *Scheduler) bind(ctx context.Context, state *framework.CycleState, f
 
 // handleSchedulingFailure records an event for the subscription that indicates the
 // subscription has failed to schedule. Also, update the subscription condition.
-func (sched *Scheduler) handleSchedulingFailure(fwk framework.Framework, sub *appsapi.Subscription, err error, _ string) {
+func (sched *Scheduler) handleSchedulingFailure(fwk framework.Framework, sInfo *framework.SubscriptionInfo, err error, _ string) {
+	sub := sInfo.Subscription
 	klog.V(2).InfoS("Unable to schedule subscription; waiting", "subscription", klog.KObj(sub), "err", err)
 
 	msg := truncateMessage(err.Error())
@@ -449,8 +468,11 @@ func (sched *Scheduler) handleSchedulingFailure(fwk framework.Framework, sub *ap
 	if strings.Contains(err.Error(), "clusters are available") {
 		return
 	}
+
 	// re-added to the queue for re-processing
-	sched.SchedulingQueue.AddRateLimited(klog.KObj(sub).String())
+	if aerr := sched.SchedulingQueue.AddUnschedulableIfNotPresent(sInfo); aerr != nil {
+		klog.ErrorS(aerr, "requeue subscription failed", "subscription", klog.KObj(sInfo.Subscription))
+	}
 }
 
 // addAllEventHandlers is a helper function used in tests and in Scheduler
@@ -465,6 +487,9 @@ func (sched *Scheduler) addAllEventHandlers() error {
 			case *appsapi.Subscription:
 				sub := obj.(*appsapi.Subscription)
 				if sub.DeletionTimestamp != nil {
+					if err := sched.SchedulingQueue.Delete(sub); err != nil {
+						utilruntime.HandleError(fmt.Errorf("unable to dequeue %T: %v", obj, err))
+					}
 					sched.lock.Lock()
 					defer sched.lock.Unlock()
 					delete(sched.subscribersMap, klog.KObj(sub).String())
@@ -489,7 +514,9 @@ func (sched *Scheduler) addAllEventHandlers() error {
 				sched.lock.Lock()
 				defer sched.lock.Unlock()
 				sched.subscribersMap[klog.KObj(sub).String()] = sub.Spec.Subscribers
-				sched.SchedulingQueue.Add(klog.KObj(sub).String())
+				if err := sched.SchedulingQueue.Add(sub); err != nil {
+					klog.ErrorS(err, "add subscription to scheduling queue", "subscription", klog.KObj(sub))
+				}
 			},
 			UpdateFunc: func(oldObj, newObj interface{}) {
 				oldSub := oldObj.(*appsapi.Subscription)
@@ -504,7 +531,9 @@ func (sched *Scheduler) addAllEventHandlers() error {
 				sched.lock.Lock()
 				defer sched.lock.Unlock()
 				sched.subscribersMap[klog.KObj(newSub).String()] = newSub.Spec.Subscribers
-				sched.SchedulingQueue.Add(klog.KObj(newSub).String())
+				if err := sched.SchedulingQueue.Add(newSub); err != nil {
+					klog.ErrorS(err, "add subscription to scheduling queue", "subscription", klog.KObj(newSub))
+				}
 			},
 		},
 	})
@@ -514,7 +543,7 @@ func (sched *Scheduler) addAllEventHandlers() error {
 		ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			finv := obj.(*appsapi.FeedInventory)
-			sched.SchedulingQueue.Add(klog.KObj(finv).String())
+			sched.enqueueSubscriptionByKey(klog.KObj(finv).String())
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
 			oldInventory := oldObj.(*appsapi.FeedInventory)
@@ -523,7 +552,7 @@ func (sched *Scheduler) addAllEventHandlers() error {
 				// Periodic resync will send update events for all known Inventory.
 				return
 			}
-			sched.SchedulingQueue.Add(klog.KObj(newInventory).String())
+			sched.enqueueSubscriptionByKey(klog.KObj(newInventory).String())
 		},
 	})
 	errors = append(errors, err)
@@ -534,9 +563,9 @@ func (sched *Scheduler) addAllEventHandlers() error {
 
 		for key, subscribers := range sched.subscribersMap {
 			for _, subscriber := range subscribers {
-				selector, err := metav1.LabelSelectorAsSelector(subscriber.ClusterAffinity)
-				if err != nil {
-					klog.ErrorDepth(5, fmt.Sprintf("failed to parse labelSelector in Subscription %s: %v", key, err))
+				selector, err2 := metav1.LabelSelectorAsSelector(subscriber.ClusterAffinity)
+				if err2 != nil {
+					klog.ErrorDepth(5, fmt.Sprintf("failed to parse labelSelector in Subscription %s: %v", key, err2))
 					continue
 				}
 				if newMcls != nil && oldMcls == nil {
@@ -555,7 +584,7 @@ func (sched *Scheduler) addAllEventHandlers() error {
 						continue
 					}
 				}
-				sched.SchedulingQueue.Add(key)
+				sched.enqueueSubscriptionByKey(key)
 				break
 			}
 		}
@@ -578,6 +607,23 @@ func (sched *Scheduler) addAllEventHandlers() error {
 				return
 			}
 
+			if !utils.ClusterHasReadyCondition(newMcls) {
+				if utilfeature.DefaultFeatureGate.Enabled(features.FailOver) {
+					klog.V(4).Infof(
+						"ManagedCluster %s is becoming not ready. Will fail over workloads to other spare clusters.",
+						klog.KObj(newMcls),
+					)
+					enqueueSubscriptionForClusterFunc(nil, oldMcls)
+					return
+				}
+
+				klog.WarningfDepth(4,
+					"Can not fail over workloads running in not ready ManagedCluster %s, "+
+						"due to disabled feature gate %s.",
+					klog.KObj(newMcls), features.FailOver,
+				)
+			}
+
 			// no updates on the labels/taints of ManagedCluster
 			if reflect.DeepEqual(oldMcls.Labels, newMcls.Labels) && reflect.DeepEqual(oldMcls.Spec.Taints, newMcls.Spec.Taints) {
 				klog.V(4).Infof("no updates on the labels/taints of ManagedCluster %s, skipping syncing", klog.KObj(oldMcls))
@@ -596,6 +642,24 @@ func (sched *Scheduler) addAllEventHandlers() error {
 	errors = append(errors, err)
 
 	return utilerrors.NewAggregate(errors)
+}
+
+func (sched *Scheduler) enqueueSubscriptionByKey(key string) {
+	ns, name, err := cache.SplitMetaNamespaceKey(key)
+	if err != nil {
+		utilruntime.HandleError(fmt.Errorf("invalid resource key: %s", key))
+		return
+	}
+	sub, err := sched.subsLister.Subscriptions(ns).Get(name)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			utilruntime.HandleError(err)
+		}
+		return
+	}
+	if aerr := sched.SchedulingQueue.Add(sub); aerr != nil {
+		klog.ErrorS(aerr, "add subscription to scheduling queue", "subscription", klog.KObj(sub))
+	}
 }
 
 func (sched *Scheduler) frameworkForSubscription(sub *appsapi.Subscription) (framework.Framework, error) {

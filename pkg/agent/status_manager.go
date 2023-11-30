@@ -18,11 +18,9 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"reflect"
-	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -42,6 +40,7 @@ import (
 	"github.com/clusternet/clusternet/pkg/controllers/clusters/clusterstatus"
 	clusternetclientset "github.com/clusternet/clusternet/pkg/generated/clientset/versioned"
 	"github.com/clusternet/clusternet/pkg/known"
+	"github.com/clusternet/clusternet/pkg/utils"
 )
 
 type Manager struct {
@@ -51,6 +50,8 @@ type Manager struct {
 	clusterStatusController *clusterstatus.Controller
 
 	managedCluster *clusterapi.ManagedCluster
+
+	labelAggregatePrefix []string
 }
 
 func NewStatusManager(
@@ -73,7 +74,10 @@ func NewStatusManager(
 			opts.ClusterRegistrationOptions.ClusterStatusCollectFrequency,
 			opts.ClusterRegistrationOptions.ClusterStatusReportFrequency,
 			opts.ClusterRegistrationOptions.LabelAggregateThreshold,
+			opts.ClientConnection.QPS,
+			opts.ClientConnection.Burst,
 		),
+		labelAggregatePrefix: opts.ClusterRegistrationOptions.LabelAggregatePrefix,
 	}
 }
 
@@ -99,7 +103,7 @@ func (mgr *Manager) Run(ctx context.Context, parentDedicatedKubeConfig *rest.Con
 			os.Exit(1)
 			return
 		}
-		mgr.updateClusterStatus(ctx, *dedicatedNamespace, string(*clusterID), client, retry.DefaultBackoff)
+		mgr.updateClusterStatus(ctx, *dedicatedNamespace, string(*clusterID), client, retry.DefaultRetry)
 	}, mgr.statusReportFrequency.Duration)
 }
 
@@ -130,7 +134,7 @@ func (mgr *Manager) updateClusterStatus(ctx context.Context, namespace, clusterI
 	// in case the network is not stable, retry with backoff
 	var lastError error
 	var mcls *clusterapi.ManagedCluster
-	err := wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+	err := wait.ExponentialBackoffWithContext(ctx, backoff, func(ctx context.Context) (bool, error) {
 		status := mgr.clusterStatusController.GetClusterStatus()
 		if status == nil {
 			lastError = errors.New("cluster status is not ready, will retry later")
@@ -146,7 +150,15 @@ func (mgr *Manager) updateClusterStatus(ctx context.Context, namespace, clusterI
 				return false, nil
 			}
 		}
+
+		oldStatus := mgr.managedCluster.Status.DeepCopy()
 		mgr.managedCluster.Status = *status
+		// update with new conditions
+		hasChanged := utils.UpdateConditions(oldStatus, status.Conditions)
+		if hasChanged {
+			mgr.managedCluster.Status.Conditions = oldStatus.Conditions
+		}
+
 		mcls, lastError = client.ClustersV1beta1().ManagedClusters(namespace).UpdateStatus(ctx, mgr.managedCluster, metav1.UpdateOptions{})
 		if lastError == nil {
 			mgr.managedCluster = mcls
@@ -167,14 +179,14 @@ func (mgr *Manager) updateClusterStatus(ctx context.Context, namespace, clusterI
 
 func (mgr *Manager) getManagedClusterNewLabels() map[string]string {
 	originLabels := mgr.managedCluster.GetLabels()
-	modifiedLabels := map[string]string{}
+	modifiedLabels := make(map[string]string)
 	for k, v := range originLabels {
-		if strings.HasPrefix(k, known.NodeLabelsKeyPrefix) {
+		if utils.ContainsPrefix(mgr.labelAggregatePrefix, k) {
 			continue
 		}
 		modifiedLabels[k] = v
 	}
-	return labels.Merge(modifiedLabels, mgr.clusterStatusController.GetManagedClusterLabels())
+	return labels.Merge(modifiedLabels, mgr.clusterStatusController.GetManagedClusterLabels(mgr.labelAggregatePrefix))
 }
 
 func patchManagedClusterTwoWayMergeLabels(client clusternetclientset.Interface, mcls *clusterapi.ManagedCluster,
@@ -182,12 +194,12 @@ func patchManagedClusterTwoWayMergeLabels(client clusternetclientset.Interface, 
 	actualCopy := mcls.DeepCopy()
 	actualCopy.Labels = newLabels
 
-	oldData, err := json.Marshal(mcls)
+	oldData, err := utils.Marshal(mcls)
 	if err != nil {
 		return nil, err
 	}
 
-	newData, err := json.Marshal(actualCopy)
+	newData, err := utils.Marshal(actualCopy)
 	if err != nil {
 		return nil, err
 	}

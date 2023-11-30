@@ -19,7 +19,9 @@ package utils
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net/http"
 	"os"
 	"reflect"
 	"strings"
@@ -66,6 +68,13 @@ func FindOCIChart(chartRepo, chartName, chartVersion string) (bool, error) {
 		registry.ClientOptDebug(Settings.Debug),
 		registry.ClientOptWriter(os.Stdout),
 		registry.ClientOptCredentialsFile(Settings.RegistryConfig),
+		registry.ClientOptHTTPClient(&http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true,
+				},
+			},
+		}),
 	)
 	if err != nil {
 		return false, err
@@ -119,7 +128,7 @@ func LocateAuthHelmChart(cfg *action.Configuration, chartRepo, username, passwor
 		return nil, err
 	}
 
-	if err := CheckIfInstallable(chartRequested); err != nil {
+	if err = CheckIfInstallable(chartRequested); err != nil {
 		return nil, err
 	}
 
@@ -145,6 +154,7 @@ func InstallRelease(cfg *action.Configuration, hr *appsapi.HelmRelease,
 	}
 
 	client := action.NewInstall(cfg)
+	client.InsecureSkipTLSverify = true
 	client.ReleaseName = getReleaseName(hr)
 	client.Timeout = time.Duration(hr.Spec.TimeoutSeconds) * time.Second
 	client.Namespace = hr.Spec.TargetNamespace
@@ -181,6 +191,7 @@ func UpgradeRelease(cfg *action.Configuration, hr *appsapi.HelmRelease,
 	}
 
 	client := action.NewUpgrade(cfg)
+	client.InsecureSkipTLSverify = true
 	client.MaxHistory = cfg.Releases.MaxHistory // need to rewire it here
 	client.Timeout = time.Duration(hr.Spec.TimeoutSeconds) * time.Second
 	client.Namespace = hr.Spec.TargetNamespace
@@ -270,14 +281,14 @@ type DeployContext struct {
 	restMapper               meta.RESTMapper
 }
 
-func NewDeployContext(config *clientcmdapi.Config, overrides *clientcmd.ConfigOverrides) (*DeployContext, error) {
-	clientConfig := clientcmd.NewDefaultClientConfig(*config, overrides)
+func NewDeployContext(config *clientcmdapi.Config, kubeQPS float32, kubeBurst int32) (*DeployContext, error) {
+	clientConfig := clientcmd.NewDefaultClientConfig(*config, &clientcmd.ConfigOverrides{})
 	restConfig, err := clientConfig.ClientConfig()
 	if err != nil {
 		return nil, fmt.Errorf("error while creating DeployContext: %v", err)
 	}
-	restConfig.QPS = 5
-	restConfig.Burst = 10
+	restConfig.QPS = kubeQPS
+	restConfig.Burst = int(kubeBurst)
 
 	kubeclient, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {

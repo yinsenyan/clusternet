@@ -100,6 +100,33 @@ const (
 	// alpha: v0.15.0
 	// Setting on clusternet-controller-manager and clusternet-agent side.
 	MultiClusterService featuregate.Feature = "MultiClusterService"
+
+	// FailOver will migrate workloads from not-ready clusters to healthy spare clusters.
+	//
+	// owner: @dixudx
+	// alpha: v0.16.0
+	// Setting on clusternet-scheduler side.
+	FailOver featuregate.Feature = "FailOver"
+
+	// FeasibleClustersToleration indicates whether to tolerate failures on feasible clusters for dynamic scheduling
+	// with predictors.
+	// This helps improve scheduler's performance on dynamic scheduling with predictors.
+	//
+	// owner: @dixudx
+	// alpha: v0.16.0
+	// Setting on clusternet-scheduler side.
+	FeasibleClustersToleration featuregate.Feature = "FeasibleClustersToleration"
+
+	// ClusterInit helps initializing the cluster after joining.
+	// All the initializing jobs are defined by a default Subscription, which
+	// When a new ManagedCluster (with taint "clusters.clusternet.io/initialization:NoSchedule") joins,
+	// a default Subscription will be performed to do some
+	// TODO
+	//
+	// owner: @dixudx
+	// alpha: v0.17.0
+	// Setting on clusternet-controller-manager side.
+	ClusterInit featuregate.Feature = "ClusterInit"
 )
 
 func init() {
@@ -110,13 +137,16 @@ func init() {
 // To add a new feature, define a key for it above and add it here. The features will be
 // available throughout Clusternet binaries.
 var defaultClusternetFeatureGates = map[featuregate.Feature]featuregate.FeatureSpec{
-	SocketConnection:    {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
-	AppPusher:           {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
-	Deployer:            {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
-	ShadowAPI:           {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
-	FeedInUseProtection: {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
-	Recovery:            {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
-	FeedInventory:       {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
-	Predictor:           {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
-	MultiClusterService: {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
+	SocketConnection:           {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
+	AppPusher:                  {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
+	Deployer:                   {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
+	ShadowAPI:                  {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
+	FeedInUseProtection:        {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
+	Recovery:                   {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
+	FeedInventory:              {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
+	Predictor:                  {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
+	MultiClusterService:        {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
+	FailOver:                   {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
+	FeasibleClustersToleration: {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
+	ClusterInit:                {Default: false, PreRelease: featuregate.Alpha, LockToDefault: false},
 }

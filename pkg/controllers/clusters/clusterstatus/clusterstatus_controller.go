@@ -40,6 +40,7 @@ import (
 	clusterapi "github.com/clusternet/clusternet/pkg/apis/clusters/v1beta1"
 	"github.com/clusternet/clusternet/pkg/features"
 	"github.com/clusternet/clusternet/pkg/known"
+	"github.com/clusternet/clusternet/pkg/utils"
 )
 
 // Controller is a controller that collects cluster status
@@ -58,10 +59,13 @@ type Controller struct {
 	nodeSynced         cache.InformerSynced
 	podLister          corev1lister.PodLister
 	podSynced          cache.InformerSynced
+	kubeQPS            float32
+	kubeBurst          int32
 
-	predictorEnable         bool
-	predictorAddress        string
-	predictorDirectAccess   bool
+	predictorEnable       bool
+	predictorAddress      string
+	predictorDirectAccess bool
+
 	labelAggregateThreshold float32
 }
 
@@ -75,6 +79,8 @@ func NewController(
 	collectingPeriod metav1.Duration,
 	heartbeatFrequency metav1.Duration,
 	labelAggregateThreshold float32,
+	kubeQPS float32,
+	kubeBurst int32,
 ) *Controller {
 	return &Controller{
 		kubeClient:              kubeClient,
@@ -90,6 +96,8 @@ func NewController(
 		useMetricsServer:        useMetricsServer,
 		predictorAddress:        predictorAddress,
 		predictorDirectAccess:   predictorDirectAccess,
+		kubeQPS:                 kubeQPS,
+		kubeBurst:               kubeBurst,
 		nodeLister:              kubeInformerFactory.Core().V1().Nodes().Lister(),
 		nodeSynced:              kubeInformerFactory.Core().V1().Nodes().Informer().HasSynced,
 		podLister:               kubeInformerFactory.Core().V1().Pods().Lister(),
@@ -149,6 +157,7 @@ func (c *Controller) collectingClusterStatus(ctx context.Context) {
 	status.Healthz = c.getHealthStatus(ctx, "/healthz")
 	status.Livez = c.getHealthStatus(ctx, "/livez")
 	status.Readyz = c.getHealthStatus(ctx, "/readyz")
+
 	status.AppPusher = &c.appPusherEnabled
 	status.UseSocket = c.useSocket
 
@@ -156,21 +165,23 @@ func (c *Controller) collectingClusterStatus(ctx context.Context) {
 		status.PodStatistics = getPodStatistics(c.metricClientset)
 		status.ResourceUsage = getResourceUsage(c.metricClientset)
 	}
-	status.HeartbeatFrequencySeconds = utilpointer.Int64Ptr(int64(c.heartbeatFrequency.Seconds()))
+
+	status.HeartbeatFrequencySeconds = utilpointer.Int64(int64(c.heartbeatFrequency.Seconds()))
 	status.Conditions = []metav1.Condition{c.getCondition(status)}
+
+	status.KubeQPS = c.kubeQPS
+	status.KubeBurst = c.kubeBurst
+
 	status.PredictorEnabled = c.predictorEnable
 	status.PredictorAddress = c.predictorAddress
 	status.PredictorDirectAccess = c.predictorDirectAccess
+
 	c.setClusterStatus(status)
 }
 
 func (c *Controller) setClusterStatus(status clusterapi.ManagedClusterStatus) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-
-	if c.clusterStatus == nil {
-		c.clusterStatus = new(clusterapi.ManagedClusterStatus)
-	}
 
 	c.clusterStatus = &status
 	c.clusterStatus.LastObservedTime = metav1.Now()
@@ -188,13 +199,13 @@ func (c *Controller) GetClusterStatus() *clusterapi.ManagedClusterStatus {
 	return c.clusterStatus.DeepCopy()
 }
 
-func (c *Controller) GetManagedClusterLabels() labels.Set {
+func (c *Controller) GetManagedClusterLabels(labelPrefixes []string) labels.Set {
 	nodes, err := c.nodeLister.List(labels.Everything())
 	if err != nil {
 		klog.Warningf("failed to list nodes: %v", err)
 		return nil
 	}
-	return aggregateLimitedLabels(nodes, c.labelAggregateThreshold)
+	return aggregateLimitedLabels(nodes, c.labelAggregateThreshold, labelPrefixes)
 }
 
 func (c *Controller) getKubernetesVersion(_ context.Context) (*version.Info, error) {
@@ -388,37 +399,57 @@ func isMasterNode(labels map[string]string) bool {
 	return false
 }
 
-func statisticNodesLabels(nodes []*corev1.Node) (map[string]int, int) {
+func statisticNodesLabels(nodes []*corev1.Node, labelPrefixes []string) (map[string]int, int) {
 	// statistic map.
-	countMap := make(map[string]int, 0)
+	countMap := make(map[string]map[string]int, 0)
 	masterNodeNum := 0
 	for _, node := range nodes {
 		if isMasterNode(node.Labels) {
 			masterNodeNum += 1
 			continue
 		}
-		for k, v := range node.Labels {
-			if strings.HasPrefix(k, known.NodeLabelsKeyPrefix) {
-				countKey := strings.Join([]string{k, v}, "/")
-				if total, exist := countMap[countKey]; exist {
-					countMap[countKey] = total + 1
+		for labelKey, labelValue := range node.Labels {
+			if utils.ContainsPrefix(labelPrefixes, labelKey) {
+				label := strings.Join([]string{labelKey, labelValue}, "=")
+				if labelMap, isok := countMap[labelKey]; isok {
+					if count, isok2 := labelMap[label]; isok2 {
+						countMap[labelKey][label] = count + 1
+					} else {
+						countMap[labelKey][label] = 1
+					}
 				} else {
-					countMap[countKey] = 1
+					countMap[labelKey] = map[string]int{label: 1}
 				}
 			}
 		}
 	}
-	return countMap, masterNodeNum
+	return filterMaxPair(countMap), masterNodeNum
 }
 
-func aggregateLimitedLabels(nodes []*corev1.Node, threshold float32) map[string]string {
+func filterMaxPair(m map[string]map[string]int) map[string]int {
+	result := make(map[string]int)
+	for _, labelMap := range m {
+		var label string
+		var count int
+		for k, v := range labelMap {
+			if count < v {
+				label = k
+				count = v
+			}
+		}
+		result[label] = count
+	}
+	return result
+}
+
+func aggregateLimitedLabels(nodes []*corev1.Node, threshold float32, labelPrefixes []string) map[string]string {
 	newMap := make(map[string]string, 0)
-	countMap, masterNum := statisticNodesLabels(nodes)
+	countMap, masterNum := statisticNodesLabels(nodes, labelPrefixes)
 	workNodeNum := len(nodes) - masterNum
 	for k, v := range countMap {
 		// the key is higher than threshold
 		if float32(v)/float32(workNodeNum) >= threshold {
-			lastInd := strings.LastIndex(k, "/")
+			lastInd := strings.LastIndex(k, "=")
 			newMap[k[:lastInd]] = k[lastInd+1:]
 		}
 	}

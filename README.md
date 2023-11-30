@@ -8,6 +8,7 @@
 ![build](https://github.com/clusternet/clusternet/actions/workflows/ci.yml/badge.svg)
 [![Version](https://img.shields.io/github/v/release/clusternet/clusternet)](https://github.com/clusternet/clusternet/releases)
 [![codecov](https://codecov.io/gh/clusternet/clusternet/branch/main/graph/badge.svg)](https://codecov.io/gh/clusternet/clusternet)
+[![FOSSA Status](https://app.fossa.com/api/projects/custom%2B162%2Fgithub.com%2Fclusternet%2Fclusternet.svg?type=shield&issueType=license)](https://app.fossa.com/projects/custom%2B162%2Fgithub.com%2Fclusternet%2Fclusternet?ref=badge_shield)
 
 ----
 
@@ -103,7 +104,7 @@ Try our [interactive tutorials](https://clusternet.io/docs/tutorials/) that help
 some basic Clusternet features.
 
 If you want to use [client-go](https://github.com/kubernetes/client-go) to interact with Clusternet, we provide a
-wrapper for easy intergration. You can
+wrapper for easy integration. You can
 follow [demo.go](https://github.com/clusternet/clusternet/blob/main/examples/clientgo/demo.go) for a quick start.
 
 To use Clusternet APIs and CRDs as a module, please add [github.com/clusternet/apis](https://github.com/clusternet/apis)
@@ -130,3 +131,7 @@ A [developer guide](https://clusternet.io/docs/developer-guide/) is ready to hel
 ---
 
 <div align="center"><img src="https://raw.githubusercontent.com/cncf/artwork/master/other/cncf/horizontal/color/cncf-color.svg" style="width:600px;" /></div>
+
+
+## License
+[![FOSSA Status](https://app.fossa.com/api/projects/custom%2B162%2Fgithub.com%2Fclusternet%2Fclusternet.svg?type=large)](https://app.fossa.com/projects/custom%2B162%2Fgithub.com%2Fclusternet%2Fclusternet?ref=badge_large)
